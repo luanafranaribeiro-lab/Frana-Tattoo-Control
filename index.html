@@ -810,8 +810,8 @@ function renderDashboard(){
       <div class="dash-pill dash-pill-clickable" data-action="openCartaoPessoalModal"><div class="dash-pill-label">${ICONS.card} Fatura do mês</div><div class="dash-pill-value num">${brl(faturaCartaoMes)}</div></div>
     </div>
 
-    <div class="grid" style="grid-template-columns:1fr 1fr;gap:20px;" id="dashCols">
-      <div>
+    <div id="dashCols">
+      <div style="margin-bottom:8px;">
         ${shoppingPending>0? `
         <div class="section-title" style="margin-top:0;">Compras</div>
         <div class="row-card" style="cursor:pointer;" data-action="goToCompras">
