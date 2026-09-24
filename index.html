@@ -104,6 +104,9 @@
     display:flex;align-items:center;justify-content:center;cursor:pointer;
   }
   .theme-toggle svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+  .logout-btn{right:64px;}
+  #auth-root{display:none;min-height:100vh;align-items:center;justify-content:center;padding:20px;background:var(--bg);}
+  .auth-card{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-l);padding:28px 24px;box-shadow:0 4px 20px rgba(0,0,0,.14);}
 
   main{flex:1;min-width:0;padding:34px 40px 60px;max-width:980px;}
 
@@ -119,6 +122,7 @@
     .navitem{flex-direction:column;gap:3px;font-size:10.5px;padding:6px 2px;border-radius:var(--radius-s);}
     main{padding:26px 16px 96px;max-width:none;}
     .theme-toggle{top:auto;bottom:78px;right:14px;}
+    .logout-btn{bottom:78px;right:60px;}
   }
 
   /* ---------- shared bits ---------- */
@@ -347,7 +351,7 @@
 </style>
 </head>
 <body>
-<div id="app">
+<div id="app" style="display:none;">
   <nav id="nav">
     <div class="brand">
       <div class="brand-mark">Frana <span>Tattoo</span> Control</div>
@@ -358,10 +362,24 @@
   </nav>
   <main id="main"></main>
 </div>
+<div id="auth-root">
+  <div class="auth-card">
+    <h1 style="font-family:var(--font-display);font-size:22px;margin-bottom:4px;">Frana Tattoo Control</h1>
+    <p style="color:var(--text-muted);font-size:13px;margin-bottom:20px;">Entre pra acessar seus dados.</p>
+    <form id="loginForm">
+      <div class="field"><label>E-mail</label><input type="email" name="email" required autocomplete="username" /></div>
+      <div class="field"><label>Senha</label><input type="password" name="password" required autocomplete="current-password" /></div>
+      <div id="loginError" style="color:var(--danger);font-size:12.5px;margin-bottom:10px;min-height:16px;"></div>
+      <button type="submit" class="btn block">Entrar</button>
+    </form>
+  </div>
+</div>
+<button class="theme-toggle logout-btn" id="logoutBtn" aria-label="Sair" style="display:none;"><svg viewBox="0 0 20 20" width="18" height="18" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 17H4.5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1H8"/><path d="M13 14l4-4-4-4"/><path d="M17 10H7.5"/></svg></button>
 <button class="theme-toggle" id="themeToggle" aria-label="Alternar tema"></button>
 <div id="modal-root"></div>
 <div id="picker-root"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ============ ICONS ============ */
 const ICONS = {
@@ -537,55 +555,140 @@ function shiftMonth(ym,delta){ const [y,m]=ym.split('-').map(Number); const d=ne
 function monthLabel(ym){ const [y,m]=ym.split('-').map(Number); const d=new Date(y,m-1,1); return d.toLocaleDateString('pt-BR',{month:'long',year:'numeric'}); }
 function sortByDateDesc(a,b){ return (b.date||'').localeCompare(a.date||''); }
 
-/* ============ DB LAYER ============ */
-let dbRef = null;
-let dbAvailable = false;
+/* ============ DB LAYER (Supabase) ============ */
+const SUPABASE_URL = 'https://bwomclwfmenrhhmpwzom.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_U1XxtSGN3BFkOrEoQSdyLQ_h6sLe-Vy';
 const COLS = ['stock','tattoos','events','flashes','shopping','agenda','settings','reembolsos'];
+let supa = null;
+let currentUser = null;
+let dbAvailable = false;
+let realtimeChannel = null;
 
 async function initDb(){
   try{
-    if(window.claude && window.claude.use){
-      dbRef = await window.claude.use('db');
+    if(!window.supabase || !window.supabase.createClient) throw new Error('supabase-js not loaded');
+    supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const { data:{ session } } = await supa.auth.getSession();
+    if(session && session.user){
+      currentUser = session.user;
+      await bootAfterLogin();
+    } else {
+      showLoginScreen();
     }
-  }catch(e){ dbRef = null; }
-  dbAvailable = !!dbRef;
-  if(dbAvailable){
-    COLS.forEach(col=>{
-      dbRef.collection(col).onSnapshot(snap=>{
-        state[col] = snap.docs.filter(d=>d.exists).map(d=>({id:d.id, ...d.data()}));
-        renderApp();
-      }, err=>{ console.error('db error', col, err); });
+    supa.auth.onAuthStateChange((event, session)=>{
+      if(event==='SIGNED_IN' && session && session.user && (!currentUser || currentUser.id!==session.user.id)){
+        currentUser = session.user;
+        bootAfterLogin();
+      } else if(event==='SIGNED_OUT'){
+        currentUser = null; dbAvailable = false;
+        if(realtimeChannel){ supa.removeChannel(realtimeChannel); realtimeChannel = null; }
+        COLS.forEach(c=>state[c]=[]);
+        showLoginScreen();
+      }
     });
+  }catch(e){
+    console.error('Supabase indisponível, entrando em modo prévia local.', e);
+    dbAvailable = false;
+    document.getElementById('app').style.display = '';
+    document.getElementById('auth-root').style.display = 'none';
+    renderApp();
   }
-  renderApp();
+}
+function showLoginScreen(){
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('logoutBtn').style.display = 'none';
+  document.getElementById('auth-root').style.display = 'flex';
+  const form = document.getElementById('loginForm');
+  form.onsubmit = async (e)=>{
+    e.preventDefault();
+    const btn = form.querySelector('button[type="submit"]');
+    if(btn.disabled) return;
+    btn.disabled = true;
+    document.getElementById('loginError').textContent = '';
+    const { error } = await supa.auth.signInWithPassword({ email: form.elements.email.value.trim(), password: form.elements.password.value });
+    if(error){
+      document.getElementById('loginError').textContent = 'E-mail ou senha incorretos.';
+      btn.disabled = false;
+    }
+  };
+}
+async function bootAfterLogin(){
+  document.getElementById('auth-root').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  document.getElementById('logoutBtn').style.display = '';
+  dbAvailable = true;
+  await loadAllCollections();
+  subscribeRealtime();
+}
+async function loadAllCollections(){
+  try{
+    const { data: rows, error } = await supa.from('frana_docs').select('col,id,data').eq('user_id', currentUser.id);
+    if(error) throw error;
+    COLS.forEach(c=>state[c]=[]);
+    (rows||[]).forEach(r=>{ if(state[r.col]) state[r.col].push({id:r.id, ...r.data}); });
+    renderApp();
+  }catch(e){ console.error('Erro ao carregar dados do Supabase', e); }
+}
+function subscribeRealtime(){
+  realtimeChannel = supa.channel('frana_docs_'+currentUser.id)
+    .on('postgres_changes', {event:'*', schema:'public', table:'frana_docs', filter:`user_id=eq.${currentUser.id}`}, payload=>{
+      const row = (payload.new && Object.keys(payload.new).length) ? payload.new : payload.old;
+      if(!row || !state[row.col]) return;
+      if(payload.eventType==='DELETE'){
+        state[row.col] = state[row.col].filter(x=>x.id!==row.id);
+      } else {
+        const doc = {id: row.id, ...row.data};
+        const idx = state[row.col].findIndex(x=>x.id===row.id);
+        if(idx>=0) state[row.col][idx] = doc; else state[row.col].push(doc);
+      }
+      renderApp();
+    })
+    .subscribe();
 }
 
 async function colAdd(col, data){
-  if(dbAvailable){
-    const ref = await dbRef.collection(col).add(data);
-    return {id: ref.id};
+  if(!dbAvailable || !supa){
+    const id = uid();
+    state[col] = [...state[col], {id, ...data}];
+    renderApp();
+    return {id};
   }
   const id = uid();
-  state[col] = [...state[col], {id, ...data}];
-  renderApp();
+  const { error } = await supa.from('frana_docs').insert({user_id:currentUser.id, col, id, data});
+  if(error){ console.error(error); throw error; }
   return {id};
 }
-async function colUpdate(col, id, data){
-  if(dbAvailable){ await dbRef.collection(col).doc(id).update(data); return; }
-  state[col] = state[col].map(x=> x.id===id ? {...x, ...data} : x);
-  renderApp();
+async function colUpdate(col, id, patch){
+  if(!dbAvailable || !supa){
+    state[col] = state[col].map(x=> x.id===id ? {...x, ...patch} : x);
+    renderApp();
+    return;
+  }
+  const { data: existing, error: selErr } = await supa.from('frana_docs').select('data').eq('user_id', currentUser.id).eq('col', col).eq('id', id).maybeSingle();
+  if(selErr){ console.error(selErr); throw selErr; }
+  const merged = {...(existing&&existing.data||{}), ...patch};
+  const { error } = await supa.from('frana_docs').update({data:merged, atualizado_em:new Date().toISOString()}).eq('user_id', currentUser.id).eq('col', col).eq('id', id);
+  if(error){ console.error(error); throw error; }
 }
 async function colDelete(col, id){
-  if(dbAvailable){ await dbRef.collection(col).doc(id).delete(); return; }
-  state[col] = state[col].filter(x=>x.id!==id);
-  renderApp();
+  if(!dbAvailable || !supa){
+    state[col] = state[col].filter(x=>x.id!==id);
+    renderApp();
+    return;
+  }
+  const { error } = await supa.from('frana_docs').delete().eq('user_id', currentUser.id).eq('col', col).eq('id', id);
+  if(error){ console.error(error); throw error; }
 }
 async function colUpsert(col, id, data){
-  if(dbAvailable){ await dbRef.collection(col).doc(id).set(data); return; }
-  const idx = state[col].findIndex(x=>x.id===id);
-  if(idx>=0) state[col] = state[col].map(x=>x.id===id?{...x,...data}:x);
-  else state[col] = [...state[col], {id, ...data}];
-  renderApp();
+  if(!dbAvailable || !supa){
+    const idx = state[col].findIndex(x=>x.id===id);
+    if(idx>=0) state[col] = state[col].map(x=>x.id===id?{...x,...data}:x);
+    else state[col] = [...state[col], {id, ...data}];
+    renderApp();
+    return;
+  }
+  const { error } = await supa.from('frana_docs').upsert({user_id:currentUser.id, col, id, data}, {onConflict:'user_id,col,id'});
+  if(error){ console.error(error); throw error; }
 }
 function getFuelDefaults(){
   const s = state.settings.find(x=>x.id==='combustivel');
@@ -642,7 +745,7 @@ function renderApp(){
 /* ============ CONN BANNER ============ */
 function connBannerHtml(){
   if(dbAvailable) return '';
-  return `<div class="banner">${ICONS.alert}<span>Pré-visualização sem conexão salva — publique o artifact para os dados persistirem entre sessões e dispositivos.</span></div>`;
+  return `<div class="banner">${ICONS.alert}<span>Não foi possível conectar ao banco agora — as alterações não serão salvas. Isso é esperado na prévia do Claude; no site publicado funciona normalmente.</span></div>`;
 }
 
 /* ============ DASHBOARD ============ */
@@ -2379,6 +2482,10 @@ document.getElementById('themeToggle').addEventListener('click', ()=>{
   document.documentElement.setAttribute('data-theme', next);
   try{ localStorage.setItem('ftc-theme', next); }catch(e){}
   updateThemeIcon();
+});
+
+document.getElementById('logoutBtn').addEventListener('click', async ()=>{
+  if(supa) await supa.auth.signOut();
 });
 
 /* ============ INIT ============ */
