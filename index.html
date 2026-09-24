@@ -376,6 +376,10 @@
           <button type="button" id="togglePasswordBtn" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;padding:8px;cursor:pointer;color:var(--text-muted);"><svg viewBox="0 0 20 20" width="18" height="18" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 10S4.5 4 10 4s8.5 6 8.5 6-3 6-8.5 6-8.5-6-8.5-6Z"/><circle cx="10" cy="10" r="2.3"/></svg></button>
         </div>
       </div>
+      <label class="check-card" for="rememberMe" style="margin-bottom:12px;">
+        <input type="checkbox" id="rememberMe" checked />
+        <div><div class="check-title">Lembrar usuário</div></div>
+      </label>
       <div id="loginError" style="color:var(--danger);font-size:12.5px;margin-bottom:10px;min-height:16px;"></div>
       <button type="submit" class="btn block">Entrar</button>
     </form>
@@ -610,13 +614,22 @@ function showLoginScreen(){
   document.getElementById('togglePasswordBtn').onclick = ()=>{
     pwInput.type = pwInput.type==='password' ? 'text' : 'password';
   };
+  try{
+    const remembered = localStorage.getItem('ftc-remember-email');
+    if(remembered){ form.elements.email.value = remembered; document.getElementById('rememberMe').checked = true; }
+  }catch(e){}
   form.onsubmit = async (e)=>{
     e.preventDefault();
     const btn = form.querySelector('button[type="submit"]');
     if(btn.disabled) return;
     btn.disabled = true;
     document.getElementById('loginError').textContent = '';
-    const { error } = await supa.auth.signInWithPassword({ email: form.elements.email.value.trim(), password: form.elements.password.value });
+    const emailTyped = form.elements.email.value.trim();
+    try{
+      if(document.getElementById('rememberMe').checked) localStorage.setItem('ftc-remember-email', emailTyped);
+      else localStorage.removeItem('ftc-remember-email');
+    }catch(e){}
+    const { error } = await supa.auth.signInWithPassword({ email: emailTyped, password: form.elements.password.value });
     if(error){
       const isNetworkErr = /load failed|failed to fetch|network/i.test(error.message||'');
       document.getElementById('loginError').textContent = isNetworkErr
