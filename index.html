@@ -189,8 +189,7 @@
   .dash-hero-sub{font-size:12px;color:var(--text-muted);margin-top:6px;}
   @media (max-width:560px){.dash-hero{grid-template-columns:1fr;}.dash-hero>div:first-child{border-right:none;border-bottom:1px solid rgba(255,255,255,.15);}.dash-hero-value{font-size:32px;}}
 
-  .dash-pills{display:grid;grid-template-columns:repeat(5,1fr);gap:9px;margin-bottom:28px;}
-  @media (max-width:700px){.dash-pills{grid-template-columns:repeat(2,1fr);}.dash-pills>*:nth-child(5){grid-column:1/-1;}}
+  .dash-pills{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:28px;}
   #dashCols{display:block;width:100%;}
   .dash-pill{background:linear-gradient(150deg, var(--tint) 0%, var(--surface) 80%);border:1px solid var(--border);border-radius:var(--radius-m);padding:13px 14px;}
   .dash-pill-label{display:flex;align-items:center;gap:6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:700;margin-bottom:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -260,6 +259,12 @@
   .row-title{font-weight:600;font-size:14.5px;}
   .row-sub{font-size:12.5px;color:var(--text-muted);margin-top:2px;}
   .row-actions{display:flex;gap:6px;align-items:center;}
+  .stock-row{min-height:56px;flex-wrap:nowrap;}
+  .stock-row-info{min-width:0;flex:1;overflow:hidden;}
+  .stock-row-title{display:flex;align-items:center;min-width:0;}
+  .stock-row-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+  .stock-row .row-actions{flex-shrink:0;}
+  @media (max-width:420px){.stock-row .badge.num{display:none;}}
 
   .badge{
     display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;
@@ -858,8 +863,6 @@ function renderDashboard(){
     <div class="dash-pills">
       <div class="dash-pill dash-pill-clickable" data-action="openAReceberModal"><div class="dash-pill-label">${ICONS.calendar} A receber</div><div class="dash-pill-value num">${brl(aReceber)}</div></div>
       <div class="dash-pill"><div class="dash-pill-label">${ICONS.cart} Gasto</div><div class="dash-pill-value num">${brl(gasto)}</div></div>
-      <div class="dash-pill"><div class="dash-pill-label">${ICONS.calc} Margem</div><div class="dash-pill-value num ${margem>=0?'pos':'neg'}">${pctFmt(margem)}</div></div>
-      <div class="dash-pill"><div class="dash-pill-label">${ICONS.needle} Tattoos</div><div class="dash-pill-value num">${tattoosF.length}</div></div>
       <div class="dash-pill dash-pill-clickable" data-action="openCartaoPessoalModal"><div class="dash-pill-label">${ICONS.card} Fatura do mês</div><div class="dash-pill-value num">${brl(faturaCartaoMes)}</div></div>
     </div>
 
@@ -1173,9 +1176,9 @@ function renderEstoque(){
 function stockRow(s){
   const low = (Number(s.quantity)||0) <= (Number(s.minStock)||0);
   return `
-    <div class="row-card">
-      <div>
-        <div class="row-title">${escapeHtml(s.name)} ${low?`<span class="badge danger" style="margin-left:6px;">baixo</span>`:''}</div>
+    <div class="row-card stock-row">
+      <div class="stock-row-info">
+        <div class="row-title stock-row-title"><span class="stock-row-name">${escapeHtml(s.name)}</span>${low?`<span class="badge danger" style="margin-left:6px;flex-shrink:0;">baixo</span>`:''}</div>
         <div class="row-sub">${tipoLabel(s.category)} · ${brl(s.costPerUnit||0)}/${UNIT_LABELS[s.unit]||s.unit}</div>
       </div>
       <div class="row-actions">
