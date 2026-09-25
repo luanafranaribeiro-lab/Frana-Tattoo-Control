@@ -521,6 +521,10 @@ async function addReembolso(desc, value, origem, dueDate){
   if(!value || value<=0) return;
   await colAdd('reembolsos', {desc, value: round2(value), origem, date: dueDate || todayISO(), pagoValor:0, createdAt: new Date().toISOString()});
 }
+async function logCompra(itemName, category, qty, unit, valorTotal){
+  if(!valorTotal || valorTotal<=0 || !qty) return;
+  await colAdd('compras', {itemName, category, qty: round2(qty), unit, valorTotal: round2(valorTotal), date: todayISO(), createdAt: new Date().toISOString()});
+}
 function reembolsoPago(r){
   if(r.pagoValor!=null) return r.pagoValor;
   return r.reembolsado ? r.value : 0;
@@ -533,7 +537,7 @@ function reembolsoPendenteTotal(){
 }
 
 /* ============ STATE ============ */
-const state = { stock:[], tattoos:[], events:[], flashes:[], shopping:[], agenda:[], settings:[], reembolsos:[] };
+const state = { stock:[], tattoos:[], events:[], flashes:[], shopping:[], agenda:[], settings:[], reembolsos:[], compras:[] };
 let activeTab = 'inicio';
 let activeEventId = null;
 let dashboardMonth = monthNow();
@@ -569,7 +573,7 @@ function sortByDateDesc(a,b){ return (b.date||'').localeCompare(a.date||''); }
 /* ============ DB LAYER (Supabase) ============ */
 const SUPABASE_URL = 'https://bwomclwfmenrhhmpwzom.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_U1XxtSGN3BFkOrEoQSdyLQ_h6sLe-Vy';
-const COLS = ['stock','tattoos','events','flashes','shopping','agenda','settings','reembolsos'];
+const COLS = ['stock','tattoos','events','flashes','shopping','agenda','settings','reembolsos','compras'];
 let supa = null;
 let currentUser = null;
 let dbAvailable = false;
@@ -1081,6 +1085,27 @@ function stockUrgency(s){
   if(min<=0) return qty<=0 ? -Infinity : Infinity;
   return qty/min;
 }
+function openHistoricoComprasModal(){
+  const months = {};
+  state.compras.forEach(c=>{
+    const ym = (c.date||'').slice(0,7) || 'sem-data';
+    (months[ym] = months[ym]||[]).push(c);
+  });
+  const sortedMonths = Object.keys(months).sort((a,b)=>b.localeCompare(a));
+  const html = sortedMonths.map((ym,i)=>{
+    const list = [...months[ym]].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+    const total = list.reduce((s,c)=>s+(c.valorTotal||0),0);
+    return `
+      <div class="section-title" style="${i===0?'margin-top:0;':''}">${ym==='sem-data'?'Sem data':monthLabel(ym)} · ${brl(total)}</div>
+      <div class="list">${list.map(c=>`
+        <div class="row-card">
+          <div><div class="row-title">${escapeHtml(c.itemName)}</div><div class="row-sub">${fmtDateBR(c.date)} · ${c.qty} ${UNIT_LABELS[c.unit]||c.unit}</div></div>
+          <span class="badge">${brl(c.valorTotal)}</span>
+        </div>`).join('')}</div>
+    `;
+  }).join('');
+  openModal('Histórico de compras', sortedMonths.length ? html : `<div class="empty">Nenhuma compra registrada ainda.</div>`);
+}
 function renderEstoque(){
   const cats = ['todos','baixo', ...Object.keys(TIPOS)];
   const listStock = state.stock.filter(s=>s.category!==MIMO_CATEGORY);
@@ -1096,7 +1121,10 @@ function renderEstoque(){
   return `
     ${connBannerHtml()}
     <div class="page-head"><h1>Estoque</h1>
-      <button class="btn" data-action="openStockForm">${ICONS.plus} Adicionar compra / material</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn secondary" data-action="openHistoricoComprasModal">${ICONS.calendar} Histórico de compras</button>
+        <button class="btn" data-action="openStockForm">${ICONS.plus} Adicionar compra / material</button>
+      </div>
     </div>
     <div class="card" style="margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
       <div><div class="stat-label">Valor total em estoque</div><div class="stat-value num">${brl(stockValueTotal())}</div></div>
@@ -2283,6 +2311,7 @@ function openStockForm(id){
       if(tipoKey==='sabonete' && unit==='L'){ quantityBought = round2(quantityBought*1000); quantityHave = round2(quantityHave*1000); minStock = round2(minStock*1000); unit='ml'; }
       const costPerUnit = quantityBought>0 ? round4(custoTotalPago/quantityBought) : 0;
       await colUpdate('stock', item.id, {name, category:tipoKey, unit, ...extraValues, quantity:quantityHave, costPerUnit, minStock});
+      await logCompra(name, tipoKey, quantityBought, unit, custoTotalPago);
       if(f.elements.cartaoPessoal.checked) await addReembolso(name, custoTotalPago, 'estoque', f.elements.cartaoVencimentoBR.value);
       closeModal(); return;
     }
@@ -2299,6 +2328,7 @@ function openStockForm(id){
     } else {
       await colAdd('stock', {...data, quantity, costPerUnit, minStock, createdAt:new Date().toISOString()});
     }
+    await logCompra(name, tipoKey, quantity, unit, custoTotalPago);
     if(f.elements.cartaoPessoal.checked) await addReembolso(name, custoTotalPago, 'estoque', f.elements.cartaoVencimentoBR.value);
     closeModal();
   };
@@ -2324,6 +2354,7 @@ function openRestockForm(id){
       newCost = newQty>0 ? round4(((oldQty*oldCost)+(addedQty*purchaseUnitCost))/newQty) : purchaseUnitCost;
     }
     await colUpdate('stock', item.id, {quantity:newQty, costPerUnit:newCost});
+    await logCompra(item.name, item.category, addedQty, item.unit, totalPago||0);
     closeModal();
   };
 }
@@ -2490,6 +2521,7 @@ const actions = {
   openAReceberModal: ()=> openAReceberModal(),
   openCartaoPessoalModal: ()=> openCartaoPessoalModal(),
   goToCompras: ()=>{ activeTab='compras'; renderApp(); },
+  openHistoricoComprasModal: ()=> openHistoricoComprasModal(),
   markPagoFromAReceber: (id)=> markPagoFromAReceber(id),
   editAgendaFromAReceber: (id)=> editAgendaFromAReceber(id),
   openEventForm: (id)=> openEventForm(id),
