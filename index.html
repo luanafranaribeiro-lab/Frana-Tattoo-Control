@@ -105,6 +105,20 @@
   }
   .theme-toggle svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
   .logout-btn{right:64px;}
+  .flash-rapida-btn{
+    width:100%;display:flex;align-items:center;justify-content:center;gap:12px;
+    padding:17px 20px;border-radius:var(--radius-l);border:none;cursor:pointer;
+    background:linear-gradient(135deg, var(--accent) 0%, #0F1D29 130%);
+    color:#fff;font-size:16.5px;font-weight:700;letter-spacing:.01em;
+    box-shadow:0 6px 20px rgba(0,0,0,.25);margin-bottom:22px;
+    transition:transform .12s;
+  }
+  .flash-rapida-btn:active{transform:scale(.97);}
+  .flash-rapida-icon{
+    display:flex;align-items:center;justify-content:center;width:34px;height:34px;flex-shrink:0;
+    border-radius:50%;background:rgba(255,255,255,.18);
+  }
+  .flash-rapida-icon svg{width:19px;height:19px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
   #auth-root{display:none;min-height:100vh;align-items:center;justify-content:center;padding:20px;background:var(--bg);}
   .auth-card{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-l);padding:28px 24px;box-shadow:0 4px 20px rgba(0,0,0,.14);}
 
@@ -1030,7 +1044,10 @@ function renderEventDetail(){
       <div class="card"><div class="stat-label">Materiais</div><div class="stat-value num">${brl(mat)}</div></div>
       <div class="card"><div class="stat-value num ${lucro>=0?'pos':'neg'}" style="font-size:22px;">${brl(lucro)}</div><div class="stat-label">Lucro (desp. ${brl(desp)})</div></div>
     </div>
-    <button class="btn block" data-action="openFlashRapidaForm" data-id="${ev.id}" style="margin-bottom:20px;">${ICONS.flash} Flash rápida</button>
+    <button class="flash-rapida-btn" data-action="openFlashRapidaForm" data-id="${ev.id}">
+      <span class="flash-rapida-icon">${ICONS.flash}</span>
+      <span>Flash rápida</span>
+    </button>
 
     <div class="section-title">Flashes do evento</div>
     ${flashTattoos.length? `<div class="list">${flashTattoos.slice().reverse().map(t=>`
@@ -1121,9 +1138,9 @@ function renderEstoque(){
   return `
     ${connBannerHtml()}
     <div class="page-head"><h1>Estoque</h1>
-      <div style="display:flex;gap:8px;">
-        <button class="btn secondary" data-action="openHistoricoComprasModal">${ICONS.calendar} Histórico de compras</button>
-        <button class="btn" data-action="openStockForm">${ICONS.plus} Adicionar compra / material</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn secondary" data-action="openHistoricoComprasModal">${ICONS.calendar} Histórico</button>
+        <button class="btn" data-action="openStockForm">${ICONS.plus} Nova compra</button>
       </div>
     </div>
     <div class="card" style="margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
