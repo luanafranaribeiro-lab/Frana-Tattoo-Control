@@ -368,9 +368,29 @@
   .evchart-bar-value{font-family:var(--font-mono);font-size:10px;font-weight:700;white-space:nowrap;margin-bottom:3px;}
   .evchart-bar-value.pos{color:var(--positive);}
   .evchart-bar-value.neg{color:var(--danger);}
+  .evchart-card{border-radius:var(--radius-l);padding:16px 16px 6px;margin-bottom:18px;box-shadow:0 4px 16px rgba(0,0,0,.12);color:#fff;}
+  .evchart-card.pos{background:linear-gradient(150deg, var(--positive) 0%, #0F3D22 140%);}
+  .evchart-card.neg{background:linear-gradient(150deg, var(--danger) 0%, #4A1410 140%);}
+  .evchart-card .section-title{color:rgba(255,255,255,.85);margin-top:0;}
+  .evchart-card .evchart-total-label{color:rgba(255,255,255,.72);}
+  .evchart-card .evchart-total-value{color:#fff;}
+  .evchart-card .evchart-bar-value{color:rgba(255,255,255,.9);}
+  .evchart-card .evchart-bar-track{background:rgba(255,255,255,.18);}
+  .evchart-card .evchart-bar.pos{background:#fff;}
+  .evchart-card .evchart-bar.neg{background:rgba(255,255,255,.45);}
+  .evchart-card .evchart-bar-label{color:rgba(255,255,255,.65);}
+  .evchart-card .evchart-bar-wrap.active .evchart-bar-label{color:#fff;font-weight:700;}
+  .evchart-card .evchart-detail{border-top:1px solid rgba(255,255,255,.25);padding-top:12px;}
+  .evchart-card .evchart-detail .row-title{color:#fff;}
+  .evchart-card .evchart-detail .row-sub{color:rgba(255,255,255,.75);}
+  .evchart-card .evchart-detail-lucro{font-family:var(--font-mono);font-size:22px;font-weight:700;margin:4px 0 10px;color:#fff;}
+  .evchart-card .evchart-detail .row-card{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);}
+  .evchart-card .evchart-detail .row-card .row-title{color:#fff;}
+  .evchart-card .evchart-detail .row-card .row-sub{color:rgba(255,255,255,.7);}
   .chevron-indicator{display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--text-muted);}
   .chevron-indicator svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
   .shopping-alert-card{background:linear-gradient(150deg, rgba(230,178,30,.22) 0%, var(--surface) 82%);border-color:rgba(230,178,30,.35);}
+  .row-card-tinted{background:linear-gradient(150deg, var(--tint) 0%, var(--surface) 82%);border-color:var(--border);}
 
   /* ---------- modal ---------- */
   #modal-root{position:relative;z-index:80;}
@@ -600,6 +620,7 @@ const state = { stock:[], tattoos:[], events:[], flashes:[], shopping:[], agenda
 let activeTab = 'inicio';
 let activeEventId = null;
 let dashboardMonth = monthNow();
+let tattoosMonth = monthNow();
 let atalhosOpen = false;
 let activeConsumptions = [];
 let stockFilter = 'todos';
@@ -981,10 +1002,12 @@ function agendaRow(a){
 
 /* ============ TATTOOS ============ */
 function renderTattoos(){
+  const all = tattoosMonth===null;
   const months = {};
   state.tattoos.forEach(t=>{
     const ev = t.eventId ? state.events.find(e=>e.id===t.eventId) : null;
     const ym = ev ? ((ev.date||'').slice(0,7) || 'sem-data') : ((t.date||'').slice(0,7) || 'sem-data');
+    if(!all && ym!==tattoosMonth) return;
     if(!months[ym]) months[ym] = {events:{}, loose:[]};
     if(ev) (months[ym].events[ev.id] = months[ym].events[ev.id]||[]).push(t);
     else months[ym].loose.push(t);
@@ -1004,7 +1027,7 @@ function renderTattoos(){
       const gasto = round2(evTattoos.reduce((s,t)=>s+(t.costTotal||0),0) + eventExpensesTotal(ev));
       const lucro = round2(faturamento - gasto);
       return `
-        <div class="row-card" data-action="openEventFromTattoos" data-id="${eid}" style="cursor:pointer;">
+        <div class="row-card row-card-tinted" data-action="openEventFromTattoos" data-id="${eid}" style="cursor:pointer;">
           <div>
             <div class="row-title">${escapeHtml(ev.name)}</div>
             <div class="row-sub">${qtd} tattoo${qtd===1?'':'s'} · gasto ${brl(gasto)} · lucro <span style="color:${lucro>=0?'var(--positive)':'var(--danger)'}">${brl(lucro)}</span></div>
@@ -1022,7 +1045,16 @@ function renderTattoos(){
     <div class="page-head"><h1>Tattoos</h1>
       <button class="btn" data-action="openTattooForm">${ICONS.plus} Registrar tattoo</button>
     </div>
-    ${sortedMonths.length? monthsHtml : `<div class="empty">Nenhuma tattoo registrada ainda.</div>`}
+    <div class="page-head" style="margin-bottom:16px;">
+      <div class="month-nav">
+        ${all ? `<span class="month-label">Todo o período</span>` : `
+        <button class="icon-btn" data-action="tattoosPrevMonth">${ICONS.chevL}</button>
+        <span class="month-label">${monthLabel(tattoosMonth)}</span>
+        <button class="icon-btn" data-action="tattoosNextMonth">${ICONS.chevR}</button>`}
+      </div>
+      <button class="chip ${all?'active':''}" data-action="tattoosToggleAll">${all?'Ver por mês':'Ver tudo'}</button>
+    </div>
+    ${sortedMonths.length? monthsHtml : `<div class="empty">Nenhuma tattoo registrada ${all?'ainda':'neste mês'}.</div>`}
   `;
 }
 function isPago(t){ return t.pago !== false; }
@@ -1032,7 +1064,7 @@ function tattooRow(t, hideEventBadge){
   const extras = [t.localCorpo, t.duracao, t.instagram].filter(Boolean).join(' · ');
   const pago = isPago(t);
   return `
-    <div class="row-card">
+    <div class="row-card row-card-tinted">
       <div>
         <div class="row-title">${escapeHtml(t.client||'Sem identificação')} ${ev?`<span class="badge accent" style="margin-left:6px;">${escapeHtml(ev.name)}</span>`:''}</div>
         <div class="row-sub">${fmtDateBR(t.date)} · ${t.type||'—'} · custo ${brl(t.costTotal||0)} · lucro <span style="color:${profit>=0?'var(--positive)':'var(--danger)'}">${brl(profit)}</span></div>
@@ -1072,19 +1104,19 @@ function eventosChartHtml(){
     const active = d.ym===selectedMonthChart;
     return `
       <div class="evchart-bar-wrap ${active?'active':''}" data-action="selectMonthChart" data-id="${d.ym}">
-        <div class="evchart-bar-value ${d.lucro>=0?'pos':'neg'}">${brlCompact(d.lucro)}</div>
+        <div class="evchart-bar-value">${brlCompact(d.lucro)}</div>
         <div class="evchart-bar-track"><div class="evchart-bar ${d.lucro>=0?'pos':'neg'}" style="height:${h}%;"></div></div>
         <div class="evchart-bar-label">${d.ym==='sem-data'?'—':monthLabel(d.ym).slice(0,3)}</div>
       </div>`;
   }).join('');
   const selected = data.find(d=>d.ym===selectedMonthChart) || null;
   return `
-    <div class="materials-group" style="margin-bottom:18px;">
+    <div class="evchart-card ${totalLucro>=0?'pos':'neg'}">
       <div class="evchart-header">
         <div class="section-title" style="margin-top:0;">Lucro por mês</div>
         <div class="evchart-total">
           <span class="evchart-total-label">Total</span>
-          <span class="evchart-total-value ${totalLucro>=0?'pos':'neg'}">${brl(totalLucro)}</span>
+          <span class="evchart-total-value">${brl(totalLucro)}</span>
         </div>
       </div>
       <div class="evchart-row">${bars}</div>
@@ -1092,13 +1124,13 @@ function eventosChartHtml(){
       <div class="evchart-detail">
         <div class="row-title">${selected.ym==='sem-data'?'Sem data':monthLabel(selected.ym)}</div>
         <div class="row-sub">faturamento ${brl(selected.fat)} · materiais ${brl(selected.mat)} · despesas ${brl(selected.desp)}</div>
-        <div style="font-family:var(--font-mono);font-size:22px;font-weight:600;margin:4px 0 10px;color:${selected.lucro>=0?'var(--positive)':'var(--danger)'};">${brl(selected.lucro)}</div>
+        <div class="evchart-detail-lucro">${brl(selected.lucro)}</div>
         <div class="list">${selected.events.sort((a,b)=>(b.ev.date||'').localeCompare(a.ev.date||'')).map(d=>`
           <div class="row-card" data-action="openEventDetail" data-id="${d.ev.id}" style="cursor:pointer;padding:10px 12px;">
             <div><div class="row-title" style="font-size:13px;">${escapeHtml(d.ev.name)}</div><div class="row-sub">${fmtDateBR(d.ev.date)}</div></div>
             <span class="badge ${d.lucro>=0?'ok':'danger'}">${brl(d.lucro)}</span>
           </div>`).join('')}</div>
-      </div>` : `<div class="empty" style="margin-top:8px;">Toque num mês pra ver os eventos e detalhes.</div>`}
+      </div>` : ``}
     </div>
   `;
 }
@@ -2808,6 +2840,9 @@ const actions = {
   dashPrevMonth: ()=>{ dashboardMonth = shiftMonth(dashboardMonth,-1); renderApp(); },
   dashNextMonth: ()=>{ dashboardMonth = shiftMonth(dashboardMonth,1); renderApp(); },
   dashToggleAll: ()=>{ dashboardMonth = dashboardMonth===null ? monthNow() : null; renderApp(); },
+  tattoosPrevMonth: ()=>{ tattoosMonth = shiftMonth(tattoosMonth,-1); renderApp(); },
+  tattoosNextMonth: ()=>{ tattoosMonth = shiftMonth(tattoosMonth,1); renderApp(); },
+  tattoosToggleAll: ()=>{ tattoosMonth = tattoosMonth===null ? monthNow() : null; renderApp(); },
   toggleAtalhos: ()=>{ atalhosOpen = !atalhosOpen; renderApp(); },
 };
 
