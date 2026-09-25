@@ -1023,34 +1023,47 @@ function tattooRow(t, hideEventBadge){
 }
 
 /* ============ EVENTOS - LIST ============ */
-let selectedEventChartId = null;
-function selectEventChart(id){ selectedEventChartId = id; renderApp(); }
+let selectedMonthChart = null;
+function selectMonthChart(ym){ selectedMonthChart = ym; renderApp(); }
 function eventosChartHtml(){
-  const events = [...state.events].sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-  if(!events.length) return '';
-  const data = events.map(ev=>{
+  if(!state.events.length) return '';
+  const months = {};
+  state.events.forEach(ev=>{
+    const ym = (ev.date||'').slice(0,7) || 'sem-data';
     const fat = eventFaturamento(ev.id), mat = eventMateriais(ev.id), desp = eventExpensesTotal(ev);
-    return {ev, fat, mat, desp, lucro: round2(fat-mat-desp)};
+    if(!months[ym]) months[ym] = {events:[], fat:0, mat:0, desp:0};
+    months[ym].events.push({ev, fat, mat, desp, lucro:round2(fat-mat-desp)});
+    months[ym].fat += fat; months[ym].mat += mat; months[ym].desp += desp;
+  });
+  const sortedYms = Object.keys(months).sort();
+  const data = sortedYms.map(ym=>{
+    const m = months[ym];
+    return {ym, events:m.events, fat:round2(m.fat), mat:round2(m.mat), desp:round2(m.desp), lucro:round2(m.fat-m.mat-m.desp)};
   });
   const maxAbs = Math.max(1, ...data.map(d=>Math.abs(d.lucro)));
   const bars = data.map(d=>{
     const h = Math.max(4, Math.round((Math.abs(d.lucro)/maxAbs)*100));
-    const active = selectedEventChartId ? d.ev.id===selectedEventChartId : d===data[data.length-1];
+    const active = selectedMonthChart ? d.ym===selectedMonthChart : d===data[data.length-1];
     return `
-      <div class="evchart-bar-wrap ${active?'active':''}" data-action="selectEventChart" data-id="${d.ev.id}">
+      <div class="evchart-bar-wrap ${active?'active':''}" data-action="selectMonthChart" data-id="${d.ym}">
         <div class="evchart-bar-track"><div class="evchart-bar ${d.lucro>=0?'pos':'neg'}" style="height:${h}%;"></div></div>
-        <div class="evchart-bar-label">${escapeHtml((d.ev.name||'').slice(0,9))}</div>
+        <div class="evchart-bar-label">${d.ym==='sem-data'?'—':monthLabel(d.ym).slice(0,3)}</div>
       </div>`;
   }).join('');
-  const selected = data.find(d=>d.ev.id===selectedEventChartId) || data[data.length-1];
+  const selected = data.find(d=>d.ym===selectedMonthChart) || data[data.length-1];
   return `
     <div class="materials-group" style="margin-bottom:18px;">
-      <div class="section-title" style="margin-top:0;">Lucro por evento</div>
+      <div class="section-title" style="margin-top:0;">Lucro por mês</div>
       <div class="evchart-row">${bars}</div>
       <div class="evchart-detail">
-        <div class="row-title">${escapeHtml(selected.ev.name)}</div>
-        <div class="row-sub">${fmtDateBR(selected.ev.date)} · faturamento ${brl(selected.fat)} · materiais ${brl(selected.mat)} · despesas ${brl(selected.desp)}</div>
-        <div style="font-family:var(--font-mono);font-size:22px;font-weight:600;margin-top:4px;color:${selected.lucro>=0?'var(--positive)':'var(--danger)'};">${brl(selected.lucro)}</div>
+        <div class="row-title">${selected.ym==='sem-data'?'Sem data':monthLabel(selected.ym)}</div>
+        <div class="row-sub">faturamento ${brl(selected.fat)} · materiais ${brl(selected.mat)} · despesas ${brl(selected.desp)}</div>
+        <div style="font-family:var(--font-mono);font-size:22px;font-weight:600;margin:4px 0 10px;color:${selected.lucro>=0?'var(--positive)':'var(--danger)'};">${brl(selected.lucro)}</div>
+        <div class="list">${selected.events.sort((a,b)=>(b.ev.date||'').localeCompare(a.ev.date||'')).map(d=>`
+          <div class="row-card" data-action="openEventDetail" data-id="${d.ev.id}" style="cursor:pointer;padding:10px 12px;">
+            <div><div class="row-title" style="font-size:13px;">${escapeHtml(d.ev.name)}</div><div class="row-sub">${fmtDateBR(d.ev.date)}</div></div>
+            <span class="badge ${d.lucro>=0?'ok':'danger'}">${brl(d.lucro)}</span>
+          </div>`).join('')}</div>
       </div>
     </div>
   `;
@@ -2622,7 +2635,7 @@ const actions = {
   openCartaoPessoalModal: ()=> openCartaoPessoalModal(),
   goToCompras: ()=>{ activeTab='compras'; renderApp(); },
   openHistoricoComprasModal: ()=> openHistoricoComprasModal(),
-  selectEventChart: (id)=> selectEventChart(id),
+  selectMonthChart: (id)=> selectMonthChart(id),
   markPagoFromAReceber: (id)=> markPagoFromAReceber(id),
   editAgendaFromAReceber: (id)=> editAgendaFromAReceber(id),
   openEventForm: (id)=> openEventForm(id),
