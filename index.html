@@ -20,6 +20,7 @@
     --positive:#3D7A55;
     --warning:#A66A12;
     --danger:#C0392B;
+    --tint:#E4EEFB;
     --radius-s:6px;
     --radius-m:12px;
     --radius-l:20px;
@@ -40,6 +41,7 @@
       --positive:#82C08F;
       --warning:#E0A85C;
       --danger:#EF5B4E;
+      --tint:#1A2740;
     }
   }
   :root[data-theme="dark"]{
@@ -54,6 +56,7 @@
     --positive:#82C08F;
     --warning:#E0A85C;
     --danger:#EF5B4E;
+    --tint:#1A2740;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;}
@@ -170,21 +173,26 @@
   .stat-value.pos{color:var(--positive);}
   .stat-value.neg{color:var(--danger);}
 
-  .dash-hero{display:grid;grid-template-columns:1.3fr 1fr;gap:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-l);overflow:hidden;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.05);}
+  .dash-hero{display:grid;grid-template-columns:1.3fr 1fr;gap:0;border-radius:var(--radius-l);overflow:hidden;margin-bottom:12px;box-shadow:0 4px 16px rgba(33,89,160,.15);}
   .dash-hero>div{padding:22px 22px;position:relative;}
-  .dash-hero>div:first-child{border-right:1px solid var(--border);background:linear-gradient(135deg, var(--surface) 60%, var(--surface-2) 200%);}
+  .dash-hero>div:first-child{background:linear-gradient(135deg, var(--accent) 0%, #123A66 100%);color:#fff;border-right:1px solid rgba(255,255,255,.15);}
+  .dash-hero>div:first-child .dash-hero-label{color:rgba(255,255,255,.8);}
+  .dash-hero>div:first-child .dash-hero-label svg{stroke:#fff;}
+  .dash-hero>div:first-child .dash-hero-value{color:#fff;}
+  .dash-hero>div:first-child .dash-hero-sub{color:rgba(255,255,255,.72);}
+  .dash-hero>div:last-child{background:linear-gradient(150deg, var(--tint) 0%, var(--surface) 75%);}
   .dash-hero-label{display:flex;align-items:center;gap:7px;font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);font-weight:700;margin-bottom:10px;}
   .dash-hero-label svg{width:14px;height:14px;stroke:var(--accent);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
   .dash-hero-value{font-family:var(--font-display);font-size:38px;font-weight:600;letter-spacing:-0.01em;line-height:1.05;}
   .dash-hero-value.pos{color:var(--positive);}
   .dash-hero-value.neg{color:var(--danger);}
   .dash-hero-sub{font-size:12px;color:var(--text-muted);margin-top:6px;}
-  @media (max-width:560px){.dash-hero{grid-template-columns:1fr;}.dash-hero>div:first-child{border-right:none;border-bottom:1px solid var(--border);}.dash-hero-value{font-size:32px;}}
+  @media (max-width:560px){.dash-hero{grid-template-columns:1fr;}.dash-hero>div:first-child{border-right:none;border-bottom:1px solid rgba(255,255,255,.15);}.dash-hero-value{font-size:32px;}}
 
   .dash-pills{display:grid;grid-template-columns:repeat(5,1fr);gap:9px;margin-bottom:28px;}
   @media (max-width:700px){.dash-pills{grid-template-columns:repeat(2,1fr);}.dash-pills>*:nth-child(5){grid-column:1/-1;}}
   #dashCols{display:block;width:100%;}
-  .dash-pill{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-m);padding:13px 14px;}
+  .dash-pill{background:linear-gradient(150deg, var(--tint) 0%, var(--surface) 80%);border:1px solid var(--border);border-radius:var(--radius-m);padding:13px 14px;}
   .dash-pill-label{display:flex;align-items:center;gap:6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:700;margin-bottom:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .dash-pill-label svg{width:12px;height:12px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
   .dash-pill-value{font-family:var(--font-mono);font-size:18px;font-weight:600;}
@@ -1198,7 +1206,7 @@ function shoppingRow(s){
   return `
     <div class="row-card">
       <div style="display:flex;align-items:center;gap:10px;">
-        <button class="icon-btn" data-action="toggleShopping" data-id="${s.id}" style="${s.done?'color:var(--positive);border-color:var(--positive);':''}">${ICONS.check}</button>
+        <button class="icon-btn" data-action="${s.done?'toggleShopping':'confirmShoppingPurchase'}" data-id="${s.id}" style="${s.done?'color:var(--positive);border-color:var(--positive);':''}">${ICONS.check}</button>
         <div>
           <div class="row-title" style="${s.done?'text-decoration:line-through;color:var(--text-muted);':''}">${escapeHtml(s.name)}${s.qty?` · ${escapeHtml(s.qty)}`:''}</div>
           ${s.note?`<div class="row-sub">${escapeHtml(s.note)}</div>`:''}
@@ -2276,13 +2284,15 @@ function refreshStockFormDynamic(tipoKey, item){
     extrasContainer.addEventListener('change', recompute);
   }
 }
-function openStockForm(id){
+function openStockForm(id, opts){
+  opts = opts || {};
+  const {shoppingId, prefillName} = opts;
   const item = id ? state.stock.find(x=>x.id===id) : null;
-  const initialTipo = (item && TIPOS[item.category]) ? item.category : 'cartucho';
+  const initialTipo = (item && TIPOS[item.category]) ? item.category : (prefillName ? 'outro' : 'cartucho');
   const tipoOptionsHtml = Object.entries(TIPOS).map(([k,t])=>`<option value="${k}" ${initialTipo===k?'selected':''}>${t.label}</option>`).join('');
   const currentTotalPago = item ? round2((item.quantity||0)*(item.costPerUnit||0)) : '';
-  openModal(item?'Editar item de estoque':'Adicionar compra / material', `
-    <form id="stockForm">
+  openModal(item?'Editar item de estoque':(prefillName?`Confirmar compra · ${escapeHtml(prefillName)}`:'Adicionar compra / material'), `
+    <form id="stockForm" data-shopping-id="${shoppingId||''}">
       <div class="field"><label>Tipo</label><select name="tipo" id="tipoSelect">${tipoOptionsHtml}</select></div>
       <div id="tipoExtraFields"></div>
       ${item? `<div id="unitFieldWrap" class="field"></div>` : `
@@ -2315,6 +2325,10 @@ function openStockForm(id){
       <button type="submit" class="btn block">${item?'Salvar alterações':'Adicionar ao estoque'}</button>
     </form>`);
   refreshStockFormDynamic(initialTipo, item);
+  if(prefillName && !item){
+    const descEl = document.querySelector('#stockForm [name="ef_descricao"]');
+    if(descEl) descEl.value = prefillName;
+  }
   document.getElementById('tipoSelect').onchange = (e)=>{ refreshStockFormDynamic(e.target.value, null); };
   document.querySelector('#stockForm [name="minStock"]').addEventListener('input', e=>{ e.target.dataset.touched='1'; });
   wireDateTimeFields(document.getElementById('stockForm'));
@@ -2341,6 +2355,7 @@ function openStockForm(id){
       await colUpdate('stock', item.id, {name, category:tipoKey, unit, ...extraValues, quantity:quantityHave, costPerUnit, minStock});
       await logCompra(name, tipoKey, quantityBought, unit, custoTotalPago);
       if(f.elements.cartaoPessoal.checked) await addReembolso(name, custoTotalPago, 'estoque', f.elements.cartaoVencimentoBR.value);
+      if(f.dataset.shoppingId) await colUpdate('shopping', f.dataset.shoppingId, {done:true});
       closeModal(); return;
     }
     let quantity = parseFloat(f.elements.quantity.value)||0;
@@ -2358,6 +2373,7 @@ function openStockForm(id){
     }
     await logCompra(name, tipoKey, quantity, unit, custoTotalPago);
     if(f.elements.cartaoPessoal.checked) await addReembolso(name, custoTotalPago, 'estoque', f.elements.cartaoVencimentoBR.value);
+    if(f.dataset.shoppingId) await colUpdate('shopping', f.dataset.shoppingId, {done:true});
     closeModal();
   };
 }
@@ -2527,6 +2543,11 @@ function toggleShopping(id){
   if(!s) return;
   colUpdate('shopping', id, {done: !s.done});
 }
+function confirmShoppingPurchase(id){
+  const s = state.shopping.find(x=>x.id===id);
+  if(!s) return;
+  openStockForm(null, {shoppingId:id, prefillName:s.name});
+}
 function deleteShopping(id){ colDelete('shopping', id); }
 async function addLowStockToShopping(){
   const low = lowStockItems();
@@ -2568,6 +2589,7 @@ const actions = {
   setStockFilter: (id, btn)=>{ stockFilter = btn.dataset.cat; renderApp(); },
   openShoppingForm: ()=> openShoppingForm(),
   toggleShopping: (id)=> toggleShopping(id),
+  confirmShoppingPurchase: (id)=> confirmShoppingPurchase(id),
   deleteShopping: (id)=> deleteShopping(id),
   addLowStockToShopping: ()=> addLowStockToShopping(),
   dashPrevMonth: ()=>{ dashboardMonth = shiftMonth(dashboardMonth,-1); renderApp(); },
