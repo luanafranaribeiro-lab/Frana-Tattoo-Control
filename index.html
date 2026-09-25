@@ -166,8 +166,7 @@
 
   .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-m);padding:18px;}
   .grid{display:grid;gap:12px;}
-  .grid-stats{grid-template-columns:repeat(4,1fr);}
-  @media (max-width:700px){.grid-stats{grid-template-columns:repeat(2,1fr);}}
+  .grid-stats{grid-template-columns:repeat(2,1fr);}
   .stat-label{font-size:12px;color:var(--text-muted);margin-bottom:6px;}
   .stat-value{font-size:22px;font-weight:600;}
   .stat-value.pos{color:var(--positive);}
@@ -1181,11 +1180,21 @@ function renderEventDetail(){
       <button class="icon-btn" data-action="deleteEvent" data-id="${ev.id}">${ICONS.trash}</button>
     </div>
     <div class="row-sub" style="margin-bottom:18px;">${fmtDateBR(ev.date)}${ev.location?' · '+escapeHtml(ev.location):''}</div>
+    <div class="dash-hero" style="margin-bottom:12px;">
+      <div>
+        <div class="dash-hero-label">${ICONS.flash} Realizadas</div>
+        <div class="dash-hero-value num">${tattoos.length}</div>
+        <div class="dash-hero-sub">${flashTattoos.length} flash${flashTattoos.length===1?'':'es'}${otherTattoos.length?` · ${otherTattoos.length} outra${otherTattoos.length===1?'':'s'}`:''}</div>
+      </div>
+      <div class="dash-hero-lucro ${lucro>=0?'pos':'neg'}">
+        <div class="dash-hero-label">${ICONS.check} Lucro</div>
+        <div class="dash-hero-value num">${brl(lucro)}</div>
+        <div class="dash-hero-sub">despesas ${brl(desp)}</div>
+      </div>
+    </div>
     <div class="grid grid-stats" style="margin-bottom:16px;">
-      <div class="card"><div class="stat-label">Flashes realizados</div><div class="stat-value num">${flashTattoos.length}</div></div>
       <div class="card"><div class="stat-label">Faturamento</div><div class="stat-value num">${brl(fat)}</div></div>
       <div class="card"><div class="stat-label">Materiais</div><div class="stat-value num">${brl(mat)}</div></div>
-      <div class="card"><div class="stat-value num ${lucro>=0?'pos':'neg'}" style="font-size:22px;">${brl(lucro)}</div><div class="stat-label">Lucro (desp. ${brl(desp)})</div></div>
     </div>
     <button class="flash-rapida-btn" data-action="openFlashRapidaForm" data-id="${ev.id}">
       <span class="flash-rapida-icon">${ICONS.flash}</span>
