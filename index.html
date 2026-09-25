@@ -1020,6 +1020,11 @@ function renderEventsList(){
 }
 
 /* ============ EVENTOS - DETAIL ============ */
+function summarizeConsumptionNames(consumptions){
+  const counts = {};
+  (consumptions||[]).forEach(c=>{ counts[c.name] = (counts[c.name]||0)+1; });
+  return Object.entries(counts).map(([name,n])=>n>1?`${name} ×${n}`:name).join(', ');
+}
 function renderEventDetail(){
   const ev = state.events.find(e=>e.id===activeEventId);
   if(!ev){ activeEventId=null; return renderEventsList(); }
@@ -1052,7 +1057,7 @@ function renderEventDetail(){
     <div class="section-title">Flashes do evento</div>
     ${flashTattoos.length? `<div class="list">${flashTattoos.slice().reverse().map(t=>`
       <div class="row-card">
-        <div><div class="row-title">Flash${t.instagram?` · ${escapeHtml(t.instagram)}`:''}</div><div class="row-sub">custo ${brl(t.costTotal||0)}</div></div>
+        <div><div class="row-title">Flash${t.instagram?` · ${escapeHtml(t.instagram)}`:''}</div><div class="row-sub">custo ${brl(t.costTotal||0)}</div><div class="row-sub" style="opacity:.75;">${escapeHtml(summarizeConsumptionNames(t.consumptions)||'sem materiais registrados')}</div></div>
         <div class="row-actions"><span class="badge">${brl(t.value||0)}</span><button class="badge badge-btn ${isPago(t)?'ok':'danger'}" data-action="toggleTattooPago" data-id="${t.id}">${isPago(t)?'Pago':'Não pago'}</button><button class="icon-btn" data-action="openTattooForm" data-id="${t.id}">${ICONS.edit}</button><button class="icon-btn" data-action="deleteTattoo" data-id="${t.id}">${ICONS.trash}</button></div>
       </div>`).join('')}</div>` : `<div class="empty">Nenhum flash registrado neste evento ainda.</div>`}
 
@@ -2160,6 +2165,11 @@ function flashRapidaAutoKitLines(){
     if(white) lines.push({item:white, qty:0.5});
     if(copinho) lines.push({item:copinho, qty:1});
   }
+  const filmeP = findPlasticoFilme('P'); if(filmeP) lines.push({item:filmeP, qty:0.2});
+  const gilete = findStockByCategory('gilete'); if(gilete) lines.push({item:gilete, qty:1});
+  const lenco = findPapel('Lenço'); if(lenco) lines.push({item:lenco, qty:5});
+  const sabonete = findStockByCategory('sabonete'); if(sabonete) lines.push({item:sabonete, qty:3});
+  const papelVegetal = findPapel('Papel vegetal'); if(papelVegetal) lines.push({item:papelVegetal, qty:round4(1/24)});
   return lines;
 }
 function renderFlashRapidaKit(){
@@ -2171,7 +2181,8 @@ function renderFlashRapidaKit(){
 function openFlashRapidaForm(eventId, resetCount){
   if(resetCount!==false) flashRapidaSessionCount = 0;
   flashRapidaCartuchos = [{stockId:lastFlashCartuchoId||'', qty:1}];
-  flashRapidaTintas = [{stockId:''}];
+  const preta = findTintaPreta();
+  flashRapidaTintas = [{stockId:preta?preta.id:''}];
   flashRapidaBranco = false;
   openModal('Flash rápida', `
     <form id="flashRapidaForm">
