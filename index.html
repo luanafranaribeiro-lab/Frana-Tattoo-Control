@@ -264,6 +264,8 @@
     padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
   }
   .row-title{font-weight:600;font-size:14.5px;}
+  .row-title svg{width:13px;height:13px;stroke:var(--positive);fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-1px;}
+  .event-row-past{opacity:.55;}
   .row-sub{font-size:12.5px;color:var(--text-muted);margin-top:2px;}
   .row-actions{display:flex;gap:6px;align-items:center;}
   .stock-row{min-height:56px;flex-wrap:nowrap;}
@@ -383,7 +385,7 @@
   .evchart-card .evchart-detail .row-title{color:#fff;}
   .evchart-card .evchart-detail .row-sub{color:rgba(255,255,255,.75);}
   .evchart-card .evchart-detail-lucro{font-family:var(--font-mono);font-size:22px;font-weight:700;margin:4px 0 10px;color:#fff;}
-  .evchart-card .evchart-detail .row-card{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);}
+  .evchart-card .evchart-detail .row-card{background:rgba(0,0,0,.28);border-color:rgba(255,255,255,.2);}
   .evchart-card .evchart-detail .row-card .row-title{color:#fff;}
   .evchart-card .evchart-detail .row-card .row-sub{color:rgba(255,255,255,.7);}
   .chevron-indicator{display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--text-muted);}
@@ -1144,10 +1146,11 @@ function renderEventsList(){
     ${list.length? `<div class="list">${list.map(ev=>{
       const fat = eventFaturamento(ev.id); const mat = eventMateriais(ev.id); const desp = eventExpensesTotal(ev);
       const lucro = round2(fat-mat-desp);
+      const past = (ev.date||'') < todayISO();
       return `
-      <div class="row-card" data-action="openEventDetail" data-id="${ev.id}" style="cursor:pointer;">
+      <div class="row-card ${past?'event-row-past':''}" data-action="openEventDetail" data-id="${ev.id}" style="cursor:pointer;">
         <div>
-          <div class="row-title">${escapeHtml(ev.name)}</div>
+          <div class="row-title">${past?`${ICONS.check} `:''}${escapeHtml(ev.name)}</div>
           <div class="row-sub">${fmtDateBR(ev.date)}${ev.location?' · '+escapeHtml(ev.location):''} · ${eventTattoos(ev.id).filter(t=>t.type==='Flash').length} flashes · faturamento ${brl(fat)}</div>
         </div>
         <span class="badge ${lucro>=0?'ok':'danger'}">lucro ${brl(lucro)}</span>
