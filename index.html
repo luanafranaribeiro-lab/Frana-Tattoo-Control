@@ -429,6 +429,11 @@
   .greet-logo img{width:80%;height:80%;object-fit:contain;}
   .greet h1{font-size:27px;}
   .greet p{color:var(--text-muted);font-size:13.5px;margin-top:5px;}
+
+  #syncStatus{position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:60;background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border);border-radius:999px;padding:5px 13px;font-size:11.5px;font-weight:600;box-shadow:0 2px 10px rgba(0,0,0,.18);pointer-events:none;max-width:92vw;text-align:center;}
+  #syncStatus[data-kind="ok"]{color:var(--positive);border-color:var(--positive);}
+  #syncStatus[data-kind="warn"]{color:var(--warning);border-color:var(--warning);}
+  .app-version{text-align:center;font-size:10.5px;color:var(--text-muted);opacity:.7;padding:22px 0 8px;}
 </style>
 </head>
 <body>
@@ -460,9 +465,11 @@
         <input type="checkbox" id="rememberMe" checked />
         <div><div class="check-title">Lembrar usuário</div></div>
       </label>
+      <div id="loginInfo" style="color:var(--warning);font-size:12.5px;margin-bottom:8px;"></div>
       <div id="loginError" style="color:var(--danger);font-size:12.5px;margin-bottom:10px;min-height:16px;"></div>
       <button type="submit" class="btn block">Entrar</button>
     </form>
+    <div class="app-version" id="loginVersion" style="padding:14px 0 0;"></div>
   </div>
 </div>
 <button class="theme-toggle logout-btn" id="logoutBtn" aria-label="Sair" style="display:none;"><svg viewBox="0 0 20 20" width="18" height="18" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 17H4.5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1H8"/><path d="M13 14l4-4-4-4"/><path d="M17 10H7.5"/></svg></button>
@@ -658,49 +665,397 @@ function shiftMonth(ym,delta){ const [y,m]=ym.split('-').map(Number); const d=ne
 function monthLabel(ym){ const [y,m]=ym.split('-').map(Number); const d=new Date(y,m-1,1); return d.toLocaleDateString('pt-BR',{month:'long',year:'numeric'}); }
 function sortByDateDesc(a,b){ return (b.date||'').localeCompare(a.date||''); }
 
-/* ============ DB LAYER (Supabase) ============ */
+/* ============ DB LAYER (Supabase + modo offline) ============ */
+const APP_VERSION = '2026.09.28-offline-1';
 const SUPABASE_URL = 'https://bwomclwfmenrhhmpwzom.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_U1XxtSGN3BFkOrEoQSdyLQ_h6sLe-Vy';
 const COLS = ['stock','tattoos','events','flashes','shopping','agenda','settings','reembolsos','compras'];
+const LS_LAST_USER = 'ftc-last-user';
 let supa = null;
 let currentUser = null;
-let dbAvailable = false;
+let sessionConfirmed = false;   // true = sessão do Supabase confirmada nesta abertura
+let needRelogin = false;
+let explicitLogout = false;
 let realtimeChannel = null;
+let queue = [];                 // fila de alterações pendentes (do usuário atual)
+let flushing = false;
+let syncRunning = false;
+let netDown = false;
+let hadOutage = false;
+let lastSyncError = false;
+let justSynced = false;
+let justSyncedTimer = null;
+let flushSlow = false;
+let flushSlowTimer = null;
 
-async function initDb(){
+/* ---- localStorage seguro ---- */
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); return true; }catch(e){ console.error('localStorage indisponível/cheio', e); return false; } }
+function lsDel(k){ try{ localStorage.removeItem(k); }catch(e){} }
+const cacheKey = uid => 'ftc-cache-'+uid;
+const queueKey = uid => 'ftc-queue-'+uid;
+function cloneJson(x){ return x===undefined ? undefined : JSON.parse(JSON.stringify(x)); }
+
+function saveCache(){
+  if(!currentUser) return;
+  const data = {}; COLS.forEach(c=>{ data[c] = state[c]; });
+  lsSet(cacheKey(currentUser.id), JSON.stringify({v:1, at:new Date().toISOString(), data}));
+}
+function loadCache(uid){
+  const raw = lsGet(cacheKey(uid)); if(!raw) return false;
   try{
-    if(!window.supabase || !window.supabase.createClient) throw new Error('supabase-js not loaded');
-    supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    const { data:{ session } } = await supa.auth.getSession();
+    const p = JSON.parse(raw); if(!p || !p.data) return false;
+    COLS.forEach(c=>{ state[c] = Array.isArray(p.data[c]) ? p.data[c] : []; });
+    return true;
+  }catch(e){ return false; }
+}
+function saveQueue(){
+  if(!currentUser) return;
+  lsSet(queueKey(currentUser.id), JSON.stringify(queue.map(o=>{ const {sending, ...rest} = o; return rest; })));
+}
+function loadQueue(uid){
+  queue = [];
+  const raw = lsGet(queueKey(uid)); if(!raw) return;
+  try{ const arr = JSON.parse(raw); if(Array.isArray(arr)) queue = arr; }catch(e){}
+}
+function readLastUser(){
+  try{ const u = JSON.parse(lsGet(LS_LAST_USER)||'null'); return (u && u.id) ? u : null; }catch(e){ return null; }
+}
+
+/* ---- aplicar alteração no estado local ---- */
+function applyOpLocal(op){
+  const arr = state[op.col]; if(!arr) return;
+  const idx = arr.findIndex(x=>x.id===op.id);
+  if(op.op==='upsert'){
+    const doc = {id:op.id, ...cloneJson(op.data)};
+    if(idx>=0) arr[idx] = doc; else arr.push(doc);
+  } else if(op.op==='patch'){
+    if(idx>=0) arr[idx] = {...arr[idx], ...cloneJson(op.patch)};
+  } else if(op.op==='delete'){
+    if(idx>=0) arr.splice(idx,1);
+  }
+}
+function applyQueueOverState(){ queue.forEach(applyOpLocal); }
+function hasPending(col,id){ return queue.some(o=>o.col===col && o.id===id); }
+
+/* ---- fila: junta alterações do mesmo item pra não crescer à toa ---- */
+function enqueue(newOp){
+  newOp.q = uid();
+  const same = o => o.col===newOp.col && o.id===newOp.id;
+  if(newOp.op==='upsert' || newOp.op==='delete'){
+    queue = queue.filter(o=> !(same(o) && !o.sending));   // o que já está sendo enviado não mexe
+    queue.push(newOp);
+  } else { // patch
+    const last = [...queue].reverse().find(same);
+    if(last && !last.sending && last.op==='upsert') last.data = {...last.data, ...newOp.patch};
+    else if(last && !last.sending && last.op==='patch') last.patch = {...last.patch, ...newOp.patch};
+    else if(last && !last.sending && last.op==='delete'){ /* item já apagado: ignora */ }
+    else queue.push(newOp);
+  }
+}
+function commitLocal(op){
+  if(op.data!==undefined) op.data = cloneJson(op.data);
+  if(op.patch!==undefined) op.patch = cloneJson(op.patch);
+  applyOpLocal(op);
+  if(currentUser){
+    enqueue({...op});
+    saveQueue(); saveCache();
+  }
+  renderApp();
+  if(currentUser) kickFlush();
+}
+
+/* ---- status na tela ---- */
+function syncStatusInfo(){
+  if(!currentUser) return null;
+  const n = queue.length;
+  if(!navigator.onLine || netDown){
+    return {kind:'warn', text: n>0 ? `Sem internet · salvo no celular (${n})` : 'Sem internet · usando o que tá no celular'};
+  }
+  if(flushing || (n>0 && !lastSyncError)){
+    // salvar normal, com internet, é rápido: não pisca aviso. Só mostra se voltou de uma queda ou se demorou.
+    return (hadOutage || flushSlow) ? {kind:'info', text:'Sincronizando…'} : null;
+  }
+  if(lastSyncError && n>0) return {kind:'warn', text:'Não consegui sincronizar agora · vou tentar de novo'};
+  if(justSynced) return {kind:'ok', text:'Sincronizado ✓'};
+  return null;
+}
+function renderSyncStatus(){
+  let el = document.getElementById('syncStatus');
+  if(!el){ el = document.createElement('div'); el.id = 'syncStatus'; document.body.appendChild(el); }
+  const appEl = document.getElementById('app');
+  const info = (appEl && appEl.style.display!=='none') ? syncStatusInfo() : null;
+  if(!info){ el.style.display = 'none'; el.textContent = ''; return; }
+  el.textContent = info.text; el.dataset.kind = info.kind; el.style.display = '';
+}
+function markSynced(){
+  const show = hadOutage;   // "Sincronizado ✓" só depois de ter ficado sem internet / com erro
+  hadOutage = false; netDown = false; lastSyncError = false;
+  if(!show) return;
+  justSynced = true;
+  clearTimeout(justSyncedTimer);
+  justSyncedTimer = setTimeout(()=>{ justSynced = false; renderSyncStatus(); }, 4000);
+}
+
+/* ---- erros ---- */
+function isNetworkError(e){
+  if(!navigator.onLine) return true;
+  if(!e) return false;
+  if(e.name==='AuthRetryableFetchError') return true;
+  if(e.code || (e.status && e.status!==0)) return false;   // o servidor respondeu
+  return /failed to fetch|load failed|network|fetch|timeout|offline/i.test(String(e.message||e));
+}
+function isAuthError(res){
+  const e = res && res.error; if(!e) return false;
+  return res.status===401 || e.code==='PGRST301' || e.code==='PGRST303' || /jwt/i.test(e.message||'');
+}
+
+/* ---- sessão ---- */
+async function confirmSession(){
+  try{
+    const r = await supa.auth.getSession();
+    const session = r && r.data && r.data.session;
     if(session && session.user){
-      currentUser = session.user;
-      await bootAfterLogin();
-    } else {
-      showLoginScreen();
+      if(session.user.id !== currentUser.id){ handleSessionExpired(); return false; }
+      currentUser = session.user; sessionConfirmed = true; return true;
     }
-    supa.auth.onAuthStateChange((event, session)=>{
-      if(event==='SIGNED_IN' && session && session.user && (!currentUser || currentUser.id!==session.user.id)){
-        currentUser = session.user;
-        bootAfterLogin();
-      } else if(event==='SIGNED_OUT'){
-        currentUser = null; dbAvailable = false;
-        if(realtimeChannel){ supa.removeChannel(realtimeChannel); realtimeChannel = null; }
-        COLS.forEach(c=>state[c]=[]);
-        showLoginScreen();
+    if(!navigator.onLine || (r && r.error && isNetworkError(r.error))){ netDown = true; hadOutage = true; return false; }
+    handleSessionExpired(); return false;
+  }catch(e){ netDown = true; hadOutage = true; return false; }
+}
+async function tryRefreshSession(){
+  try{
+    const r = await supa.auth.refreshSession();
+    const s = r && r.data && r.data.session;
+    if(s && s.user && currentUser && s.user.id===currentUser.id){ currentUser = s.user; return true; }
+  }catch(e){}
+  return false;
+}
+function handleSessionExpired(){
+  if(needRelogin) return;
+  needRelogin = true; sessionConfirmed = false;
+  if(realtimeChannel && supa){ try{ supa.removeChannel(realtimeChannel); }catch(e){} realtimeChannel = null; }
+  try{ closeModal(); }catch(e){}
+  showLoginScreen('Sua sessão expirou. Entre de novo pra mandar o que ficou salvo no celular — nada foi perdido.');
+  renderSyncStatus();
+}
+
+/* ---- enviar a fila pro Supabase ---- */
+async function sendOp(op){
+  const uidUser = currentUser.id;
+  const now = new Date().toISOString();
+  if(op.op==='upsert'){
+    return await supa.from('frana_docs').upsert({user_id:uidUser, col:op.col, id:op.id, data:op.data, atualizado_em:now}, {onConflict:'user_id,col,id'});
+  }
+  if(op.op==='delete'){
+    return await supa.from('frana_docs').delete().eq('user_id',uidUser).eq('col',op.col).eq('id',op.id);
+  }
+  // patch: junta com o que está no servidor (não pisa em campos que o Financas mexeu e não ressuscita item apagado)
+  const sel = await supa.from('frana_docs').select('data').eq('user_id',uidUser).eq('col',op.col).eq('id',op.id).maybeSingle();
+  if(sel.error) return sel;
+  if(!sel.data) return {error:null};
+  const merged = {...(sel.data.data||{}), ...op.patch};
+  return await supa.from('frana_docs').update({data:merged, atualizado_em:now}).eq('user_id',uidUser).eq('col',op.col).eq('id',op.id);
+}
+async function flushQueue(){
+  if(flushing || !currentUser || !supa) return {sent:0};
+  if(!navigator.onLine){ netDown = true; hadOutage = true; renderSyncStatus(); return {sent:0}; }
+  flushing = true; flushSlow = false;
+  clearTimeout(flushSlowTimer);
+  flushSlowTimer = setTimeout(()=>{ if(flushing){ flushSlow = true; renderSyncStatus(); } }, 1200);
+  renderSyncStatus();
+  let sent = 0, authRetries = 0;
+  try{
+    if(!sessionConfirmed){ if(!(await confirmSession())) return {sent:0}; }
+    while(queue.length){
+      const op = queue[0];
+      op.sending = true;
+      let res;
+      try{ res = await sendOp(op); }catch(e){ res = {error:e}; }
+      if(res && res.error){
+        op.sending = false;
+        if(isAuthError(res)){
+          if(authRetries<1 && await tryRefreshSession()){ authRetries++; continue; }
+          handleSessionExpired(); return {sent};
+        }
+        if(isNetworkError(res.error)){ netDown = true; hadOutage = true; }
+        else { lastSyncError = true; hadOutage = true; console.error('Erro ao sincronizar', op, res.error); }
+        return {sent};
       }
-    });
+      queue = queue.filter(o=>o.q!==op.q);
+      saveQueue(); sent++;
+    }
+    netDown = false; lastSyncError = false;
+    if(sent>0) markSynced();
+    return {sent};
+  } finally {
+    flushing = false; flushSlow = false; clearTimeout(flushSlowTimer); renderSyncStatus();
+  }
+}
+function kickFlush(){
+  if(!currentUser || !supa) return;
+  if(!navigator.onLine){ netDown = true; hadOutage = true; renderSyncStatus(); return; }
+  flushQueue().catch(e=>console.error(e));
+}
+async function syncNow(opts){
+  opts = opts || {};
+  if(!currentUser || !supa || needRelogin) return;
+  if(syncRunning) return;
+  syncRunning = true;
+  try{
+    if(navigator.onLine) netDown = false;
+    await flushQueue();
+    if(needRelogin || !sessionConfirmed || netDown || !navigator.onLine) return;
+    if(opts.reload){
+      const ok = await loadAllCollections();
+      if(ok && hadOutage && !lastSyncError) markSynced();
+    }
+    if(sessionConfirmed && !realtimeChannel) subscribeRealtime();
+  } finally {
+    syncRunning = false; renderSyncStatus();
+  }
+}
+
+/* ---- carregar do Supabase (e sobrepor o que ainda está na fila) ---- */
+async function loadAllCollections(){
+  if(!supa || !currentUser) return false;
+  try{
+    const { data: rows, error } = await supa.from('frana_docs').select('col,id,data').eq('user_id', currentUser.id);
+    if(error){ if(isAuthError({error, status:error.status})){ handleSessionExpired(); return false; } throw error; }
+    COLS.forEach(c=>state[c]=[]);
+    (rows||[]).forEach(r=>{ if(state[r.col]) state[r.col].push({id:r.id, ...r.data}); });
+    applyQueueOverState();
+    saveCache();
+    netDown = false;
+    renderApp();
+    return true;
   }catch(e){
-    console.error('Supabase indisponível, entrando em modo prévia local.', e);
-    dbAvailable = false;
+    console.error('Erro ao carregar dados do Supabase', e);
+    if(isNetworkError(e)){ netDown = true; hadOutage = true; } else lastSyncError = true;
+    renderSyncStatus();
+    return false;
+  }
+}
+function subscribeRealtime(){
+  if(!supa || !currentUser) return;
+  if(realtimeChannel){ try{ supa.removeChannel(realtimeChannel); }catch(e){} realtimeChannel = null; }
+  realtimeChannel = supa.channel('frana_docs_'+currentUser.id)
+    .on('postgres_changes', {event:'*', schema:'public', table:'frana_docs', filter:`user_id=eq.${currentUser.id}`}, payload=>{
+      const row = (payload.new && Object.keys(payload.new).length) ? payload.new : payload.old;
+      if(!row || !state[row.col]) return;
+      if(hasPending(row.col, row.id)) return;   // tem alteração minha esperando pra ir: ela vale mais
+      if(payload.eventType==='DELETE'){
+        state[row.col] = state[row.col].filter(x=>x.id!==row.id);
+      } else {
+        const doc = {id: row.id, ...row.data};
+        const idx = state[row.col].findIndex(x=>x.id===row.id);
+        if(idx>=0) state[row.col][idx] = doc; else state[row.col].push(doc);
+      }
+      saveCache();
+      renderApp();
+    })
+    .subscribe();
+}
+
+/* ---- entrada / boot ---- */
+function showApp(){
+  document.getElementById('auth-root').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  document.getElementById('logoutBtn').style.display = '';
+}
+async function bootAfterLogin(){
+  needRelogin = false; sessionConfirmed = true;
+  lsSet(LS_LAST_USER, JSON.stringify({id:currentUser.id, email:currentUser.email||''}));
+  showApp();
+  COLS.forEach(c=>state[c]=[]);
+  loadQueue(currentUser.id);
+  if(loadCache(currentUser.id)){ applyQueueOverState(); }
+  renderApp();
+  await syncNow({reload:true});
+}
+async function bootOffline(last){
+  currentUser = {id:last.id, email:last.email||''};
+  sessionConfirmed = false; needRelogin = false;
+  netDown = !navigator.onLine || !supa; hadOutage = true;
+  showApp();
+  COLS.forEach(c=>state[c]=[]);
+  loadQueue(last.id);
+  loadCache(last.id);
+  applyQueueOverState();
+  renderApp();
+  renderSyncStatus();
+  if(navigator.onLine) syncNow({reload:true});
+}
+async function initDb(){
+  registerServiceWorker();
+  if(window.supabase && window.supabase.createClient){
+    try{ supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); }catch(e){ supa = null; console.error('Falha ao criar cliente Supabase', e); }
+  }
+  const last = readLastUser();
+  window.addEventListener('online', ()=>{ netDown = false; renderSyncStatus(); syncNow({reload:true}); });
+  window.addEventListener('offline', ()=>{ hadOutage = true; renderSyncStatus(); });
+  setInterval(()=>{
+    if(currentUser && !needRelogin && (queue.length>0 || netDown || hadOutage || lastSyncError)) syncNow({reload:true});
+  }, 30000);
+
+  if(!supa){
+    if(last){ await bootOffline(last); return; }
+    console.error('Supabase indisponível, entrando em modo prévia local.');
     document.getElementById('app').style.display = '';
     document.getElementById('auth-root').style.display = 'none';
     renderApp();
+    return;
   }
+  let session = null, sessErr = null, timedOut = false;
+  if(last && !navigator.onLine){
+    sessErr = {name:'AuthRetryableFetchError', message:'offline'};   // sem internet: nem tenta confirmar a sessão
+  } else {
+    const limit = new Promise(res=>setTimeout(()=>res('timeout'), 6000));   // internet ruim: não deixa a tela em branco
+    const attempt = supa.auth.getSession().then(r=>({r})).catch(e=>({e}));
+    const got = await Promise.race([attempt, limit]);
+    if(got==='timeout'){ timedOut = true; }
+    else if(got.r){ session = got.r.data && got.r.data.session; sessErr = got.r.error; }
+    else sessErr = got.e;
+  }
+  if(session && session.user){
+    currentUser = session.user;
+    await bootAfterLogin();
+  } else if(last && (timedOut || !navigator.onLine || (sessErr && isNetworkError(sessErr)))){
+    await bootOffline(last);
+  } else {
+    showLoginScreen();
+  }
+  supa.auth.onAuthStateChange((event, sess)=>{
+    if(event==='SIGNED_IN' && sess && sess.user){
+      if(!currentUser || currentUser.id!==sess.user.id || !sessionConfirmed || needRelogin){
+        currentUser = sess.user;
+        bootAfterLogin();
+      }
+    } else if(event==='SIGNED_OUT'){
+      const wasExplicit = explicitLogout; explicitLogout = false;
+      if(realtimeChannel){ try{ supa.removeChannel(realtimeChannel); }catch(e){} realtimeChannel = null; }
+      sessionConfirmed = false;
+      if(wasExplicit || !currentUser){
+        lsDel(LS_LAST_USER);
+        currentUser = null; queue = [];
+        COLS.forEach(c=>state[c]=[]);
+        showLoginScreen();
+      } else {
+        handleSessionExpired();
+      }
+    }
+  });
 }
-function showLoginScreen(){
+function registerServiceWorker(){
+  if(!('serviceWorker' in navigator) || location.protocol!=='https:') return;
+  try{ navigator.serviceWorker.register('sw.js').catch(e=>console.warn('Service worker não registrado', e)); }catch(e){}
+}
+function showLoginScreen(info){
   document.getElementById('app').style.display = 'none';
   document.getElementById('logoutBtn').style.display = 'none';
   document.getElementById('auth-root').style.display = 'flex';
+  const infoEl = document.getElementById('loginInfo');
+  if(infoEl) infoEl.textContent = info || '';
   const form = document.getElementById('loginForm');
   const pwInput = document.getElementById('loginPassword');
   document.getElementById('togglePasswordBtn').onclick = ()=>{
@@ -721,93 +1076,38 @@ function showLoginScreen(){
       if(document.getElementById('rememberMe').checked) localStorage.setItem('ftc-remember-email', emailTyped);
       else localStorage.removeItem('ftc-remember-email');
     }catch(e){}
-    const { error } = await supa.auth.signInWithPassword({ email: emailTyped, password: form.elements.password.value });
-    if(error){
-      const isNetworkErr = /load failed|failed to fetch|network/i.test(error.message||'');
-      document.getElementById('loginError').textContent = isNetworkErr
-        ? 'Não deu pra conectar ao banco daqui. Isso é esperado na prévia do Claude — teste no site publicado (GitHub Pages).'
-        : 'E-mail ou senha incorretos.';
-      btn.disabled = false;
+    if(!supa){
+      document.getElementById('loginError').textContent = 'Não consegui carregar o sistema de login. Confira a internet e abra de novo.';
+      btn.disabled = false; return;
     }
+    let error = null;
+    try{ ({ error } = await supa.auth.signInWithPassword({ email: emailTyped, password: form.elements.password.value })); }
+    catch(err){ error = err; }
+    if(error){
+      const isNetworkErr = !navigator.onLine || /load failed|failed to fetch|network/i.test(error.message||'');
+      document.getElementById('loginError').textContent = !navigator.onLine
+        ? 'Sem internet. Pra entrar neste aparelho a primeira vez (ou depois de sair) você precisa estar online.'
+        : isNetworkErr
+          ? 'Não deu pra conectar ao banco daqui. Isso é esperado na prévia do Claude — teste no site publicado (GitHub Pages).'
+          : 'E-mail ou senha incorretos.';
+      btn.disabled = false;
+    } else { btn.disabled = false; }
   };
-}
-async function bootAfterLogin(){
-  document.getElementById('auth-root').style.display = 'none';
-  document.getElementById('app').style.display = '';
-  document.getElementById('logoutBtn').style.display = '';
-  dbAvailable = true;
-  await loadAllCollections();
-  subscribeRealtime();
-}
-async function loadAllCollections(){
-  try{
-    const { data: rows, error } = await supa.from('frana_docs').select('col,id,data').eq('user_id', currentUser.id);
-    if(error) throw error;
-    COLS.forEach(c=>state[c]=[]);
-    (rows||[]).forEach(r=>{ if(state[r.col]) state[r.col].push({id:r.id, ...r.data}); });
-    renderApp();
-  }catch(e){ console.error('Erro ao carregar dados do Supabase', e); }
-}
-function subscribeRealtime(){
-  realtimeChannel = supa.channel('frana_docs_'+currentUser.id)
-    .on('postgres_changes', {event:'*', schema:'public', table:'frana_docs', filter:`user_id=eq.${currentUser.id}`}, payload=>{
-      const row = (payload.new && Object.keys(payload.new).length) ? payload.new : payload.old;
-      if(!row || !state[row.col]) return;
-      if(payload.eventType==='DELETE'){
-        state[row.col] = state[row.col].filter(x=>x.id!==row.id);
-      } else {
-        const doc = {id: row.id, ...row.data};
-        const idx = state[row.col].findIndex(x=>x.id===row.id);
-        if(idx>=0) state[row.col][idx] = doc; else state[row.col].push(doc);
-      }
-      renderApp();
-    })
-    .subscribe();
 }
 
 async function colAdd(col, data){
-  if(!dbAvailable || !supa){
-    const id = uid();
-    state[col] = [...state[col], {id, ...data}];
-    renderApp();
-    return {id};
-  }
   const id = uid();
-  const { error } = await supa.from('frana_docs').insert({user_id:currentUser.id, col, id, data});
-  if(error){ console.error(error); throw error; }
+  commitLocal({op:'upsert', col, id, data});
   return {id};
 }
 async function colUpdate(col, id, patch){
-  if(!dbAvailable || !supa){
-    state[col] = state[col].map(x=> x.id===id ? {...x, ...patch} : x);
-    renderApp();
-    return;
-  }
-  const { data: existing, error: selErr } = await supa.from('frana_docs').select('data').eq('user_id', currentUser.id).eq('col', col).eq('id', id).maybeSingle();
-  if(selErr){ console.error(selErr); throw selErr; }
-  const merged = {...(existing&&existing.data||{}), ...patch};
-  const { error } = await supa.from('frana_docs').update({data:merged, atualizado_em:new Date().toISOString()}).eq('user_id', currentUser.id).eq('col', col).eq('id', id);
-  if(error){ console.error(error); throw error; }
+  commitLocal({op:'patch', col, id, patch});
 }
 async function colDelete(col, id){
-  if(!dbAvailable || !supa){
-    state[col] = state[col].filter(x=>x.id!==id);
-    renderApp();
-    return;
-  }
-  const { error } = await supa.from('frana_docs').delete().eq('user_id', currentUser.id).eq('col', col).eq('id', id);
-  if(error){ console.error(error); throw error; }
+  commitLocal({op:'delete', col, id});
 }
 async function colUpsert(col, id, data){
-  if(!dbAvailable || !supa){
-    const idx = state[col].findIndex(x=>x.id===id);
-    if(idx>=0) state[col] = state[col].map(x=>x.id===id?{...x,...data}:x);
-    else state[col] = [...state[col], {id, ...data}];
-    renderApp();
-    return;
-  }
-  const { error } = await supa.from('frana_docs').upsert({user_id:currentUser.id, col, id, data}, {onConflict:'user_id,col,id'});
-  if(error){ console.error(error); throw error; }
+  commitLocal({op:'upsert', col, id, data});
 }
 function getFuelDefaults(){
   const s = state.settings.find(x=>x.id==='combustivel');
@@ -859,11 +1159,12 @@ function renderApp(){
   else if(activeTab==='eventos') main.innerHTML = activeEventId ? renderEventDetail() : renderEventsList();
   else if(activeTab==='estoque') main.innerHTML = renderEstoque();
   else if(activeTab==='compras') main.innerHTML = renderCompras();
+  main.insertAdjacentHTML('beforeend', `<div class="app-version">Frana Tattoo Control · v${APP_VERSION}</div>`);
 }
 
 /* ============ CONN BANNER ============ */
 function connBannerHtml(){
-  if(dbAvailable) return '';
+  if(currentUser) return '';
   return `<div class="banner">${ICONS.alert}<span>Não foi possível conectar ao banco agora — as alterações não serão salvas. Isso é esperado na prévia do Claude; no site publicado funciona normalmente.</span></div>`;
 }
 
@@ -2897,13 +3198,20 @@ document.getElementById('themeToggle').addEventListener('click', ()=>{
   updateThemeIcon();
 });
 
-document.getElementById('logoutBtn').addEventListener('click', async ()=>{
-  if(supa) await supa.auth.signOut();
+document.getElementById('logoutBtn').addEventListener('click', ()=>{
+  const doLogout = async ()=>{
+    explicitLogout = true;
+    if(supa){ try{ await supa.auth.signOut({scope:'local'}); }catch(e){ console.error(e); } }
+  };
+  if(queue.length>0){
+    confirmModal(`Tem ${queue.length} alteraç${queue.length===1?'ão':'ões'} que ainda não foi${queue.length===1?'':'ram'} enviada${queue.length===1?'':'s'}. Elas ficam salvas no celular e são enviadas quando você entrar de novo. Sair mesmo?`, doLogout);
+  } else doLogout();
 });
 
 /* ============ INIT ============ */
 try{ initTheme(); }catch(e){ console.error('theme init failed', e); }
 renderApp();
+try{ document.getElementById('loginVersion').textContent = 'v'+APP_VERSION; }catch(e){}
 initDb();
 </script>
 </body>
