@@ -273,7 +273,7 @@
   .stock-row-title{display:flex;align-items:center;min-width:0;}
   .stock-row-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
   .stock-row .row-actions{flex-shrink:0;}
-  @media (max-width:420px){.stock-row .badge.num{display:none;}}
+  .stock-row-qty{color:var(--text);font-weight:600;}
 
   .badge{
     display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;
@@ -1601,6 +1601,7 @@ function renderEstoque(){
     </div>
     <div class="card" style="margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
       <div><div class="stat-label">Valor total em estoque</div><div class="stat-value num">${brl(stockValueTotal())}</div></div>
+      <div><div class="stat-label">Itens cadastrados</div><div class="stat-value num">${listStock.length}</div></div>
       <div data-action="setStockFilter" data-cat="baixo" style="cursor:pointer;">
         <div class="stat-label">Itens abaixo do mínimo</div>
         <div class="stat-value num ${low.length?'neg':''}">${low.length}</div>
@@ -1619,10 +1620,9 @@ function stockRow(s){
     <div class="row-card stock-row">
       <div class="stock-row-info">
         <div class="row-title stock-row-title"><span class="stock-row-name">${escapeHtml(s.name)}</span>${low?`<span class="badge danger" style="margin-left:6px;flex-shrink:0;">baixo</span>`:''}</div>
-        <div class="row-sub">${tipoLabel(s.category)} · ${brl(s.costPerUnit||0)}/${UNIT_LABELS[s.unit]||s.unit}</div>
+        <div class="row-sub">${tipoLabel(s.category)} · ${brl(s.costPerUnit||0)}/${UNIT_LABELS[s.unit]||s.unit} · <span class="stock-row-qty">${s.quantity} ${UNIT_LABELS[s.unit]||s.unit}</span></div>
       </div>
       <div class="row-actions">
-        <span class="badge num">${s.quantity} ${UNIT_LABELS[s.unit]||s.unit}</span>
         <button class="icon-btn" data-action="openRestockForm" data-id="${s.id}" style="color:var(--positive);border-color:var(--positive);">${ICONS.plus}</button>
         <button class="icon-btn" data-action="openStockForm" data-id="${s.id}">${ICONS.edit}</button>
         <button class="icon-btn" data-action="deleteStock" data-id="${s.id}">${ICONS.trash}</button>
