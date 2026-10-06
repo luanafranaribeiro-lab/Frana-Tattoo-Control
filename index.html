@@ -98,10 +98,11 @@
     padding:10px 12px;border-radius:var(--radius-s);
     border:none;background:transparent;color:var(--text-muted);
     font-size:14.5px;font-weight:500;cursor:pointer;text-align:left;width:100%;
+    transition:background .15s,color .15s,transform .1s;
   }
   .navitem svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
   .navitem:hover{background:var(--surface-2);color:var(--text);}
-  .navitem.active{background:var(--accent);color:var(--accent-contrast);}
+  .navitem.active{background:linear-gradient(135deg, var(--accent) 0%, #123A66 130%);color:#fff;box-shadow:0 3px 10px rgba(16,32,58,.3);}
   .nav-foot{font-size:11px;color:var(--text-muted);padding:10px 12px 0;border-top:1px solid var(--border);margin-top:10px;}
 
   .theme-toggle{
@@ -143,11 +144,14 @@
     #nav{
       position:fixed;bottom:0;left:0;right:0;top:auto;height:68px;width:100%;
       flex-direction:row;align-items:center;padding:6px 4px;
-      border-right:none;border-top:1px solid var(--border);z-index:45;
+      background:linear-gradient(180deg, #17283F 0%, #0E1C30 100%);
+      border-right:none;border-top:1px solid rgba(255,255,255,.08);z-index:45;
+      box-shadow:0 -6px 24px rgba(0,0,0,.22);
     }
     .brand,.nav-foot{display:none;}
     .navlist{flex-direction:row;width:100%;max-width:640px;margin:0 auto;justify-content:space-around;gap:0;}
-    .navitem{flex-direction:column;gap:3px;font-size:10.5px;padding:6px 2px;border-radius:var(--radius-s);}
+    .navitem{flex-direction:column;gap:3px;font-size:10.5px;padding:6px 2px;border-radius:var(--radius-s);color:rgba(255,255,255,.52);}
+    .navitem:hover{background:rgba(255,255,255,.08);color:#fff;}
     main{padding:26px 20px 96px;max-width:640px;margin:0 auto;}
     .theme-toggle{top:auto;bottom:78px;right:14px;}
     .logout-btn{bottom:78px;right:60px;}
@@ -156,7 +160,11 @@
 
   /* ---------- shared bits ---------- */
   .page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:22px;flex-wrap:wrap;}
-  .page-head h1{font-size:26px;}
+  .page-head h1{font-size:26px;position:relative;padding-left:16px;}
+  .page-head h1::before{
+    content:'';position:absolute;left:0;top:6px;bottom:6px;width:5px;border-radius:3px;
+    background:linear-gradient(180deg, var(--accent) 0%, #5B9EE6 100%);
+  }
   .btn{
     display:inline-flex;align-items:center;gap:7px;
     padding:9px 15px;border-radius:var(--radius-s);
@@ -435,7 +443,13 @@
   .banner svg{width:15px;height:15px;stroke:var(--warning);fill:none;stroke-width:1.7;flex-shrink:0;}
   .classificar-banner{background:linear-gradient(150deg, rgba(230,178,30,.22) 0%, var(--surface) 82%);border-color:rgba(230,178,30,.4);cursor:pointer;color:var(--text);}
 
-  .greet{margin-bottom:24px;display:flex;align-items:center;gap:16px;}
+  .greet{position:relative;margin-bottom:24px;display:flex;align-items:center;gap:16px;}
+  .greet::before{
+    content:'';position:absolute;top:-55px;right:-30px;width:240px;height:240px;
+    border-radius:50%;background:radial-gradient(circle, var(--accent) 0%, transparent 70%);
+    opacity:.14;pointer-events:none;z-index:0;
+  }
+  .greet-logo,.greet h1,.greet p{position:relative;z-index:1;}
   .greet-logo{
     width:88px;height:88px;flex-shrink:0;border-radius:50%;background:#0F1D29;
     display:flex;align-items:center;justify-content:center;box-shadow:0 3px 12px rgba(0,0,0,.22);
