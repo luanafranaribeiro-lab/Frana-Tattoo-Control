@@ -604,9 +604,42 @@ const EXTRA_LABELS = {mimoPronto:'Mimo pronto'};
 function tipoLabel(key){ return (TIPOS[key]&&TIPOS[key].label) || EXTRA_LABELS[key] || key || '—'; }
 const MIMO_CATEGORY = 'mimoPronto';
 function getMimoItem(){ return state.stock.find(s=>s.category===MIMO_CATEGORY) || null; }
-async function addReembolso(desc, value, origem, dueDate){
+async function addReembolso(desc, value, origem, dueDate, forma){
   if(!value || value<=0) return;
-  await colAdd('reembolsos', {desc, value: round2(value), origem, date: dueDate || todayISO(), pagoValor:0, createdAt: new Date().toISOString()});
+  const f = forma || 'credito';
+  // crédito: vence numa data futura (regra existente). débito/pix: já é dinheiro seu, conta como gasto já neste mês.
+  const date = f==='credito' ? (dueDate || todayISO()) : todayISO();
+  await colAdd('reembolsos', {desc, value: round2(value), origem, date, forma:f, pagoValor:0, createdAt: new Date().toISOString()});
+}
+function formaPagamentoHtml(prefix, label){
+  return `
+    <div class="field"><label>${label||'Como você pagou'}</label>
+      <div class="chip-row" id="${prefix}FormaChips">
+        <button type="button" class="chip active" data-forma="credito">Crédito</button>
+        <button type="button" class="chip" data-forma="debito">Débito / Pix</button>
+      </div>
+    </div>
+    <div id="${prefix}FormaHint" class="hint"></div>`;
+}
+function wireFormaPagamento(prefix, vencimentoWrapId, onChange){
+  let forma = 'credito';
+  const hintEl = document.getElementById(prefix+'FormaHint');
+  const update = ()=>{
+    const vWrap = document.getElementById(vencimentoWrapId);
+    if(vWrap) vWrap.style.display = forma==='credito' ? '' : 'none';
+    if(hintEl) hintEl.textContent = forma==='credito' ? '' : 'Já é seu dinheiro: conta como gasto neste mês, a tattoo te paga de volta agora.';
+    if(onChange) onChange(forma);
+  };
+  document.querySelectorAll(`#${prefix}FormaChips .chip`).forEach(btn=>{
+    btn.onclick = ()=>{
+      document.querySelectorAll(`#${prefix}FormaChips .chip`).forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      forma = btn.dataset.forma;
+      update();
+    };
+  });
+  update();
+  return ()=>forma;
 }
 async function logCompra(itemName, category, qty, unit, valorTotal){
   if(!valorTotal || valorTotal<=0 || !qty) return;
@@ -1140,7 +1173,25 @@ function eventExpensesTotal(ev){ return (ev.expenses||[]).reduce((s,e)=>s+(e.val
 function eventFaturamento(eventId){ return eventTattoos(eventId).reduce((s,t)=>s+(t.value||0),0); }
 function eventMateriais(eventId){ return eventTattoos(eventId).reduce((s,t)=>s+(t.costTotal||0),0); }
 function stockValueTotal(){ return state.stock.reduce((s,i)=>s+((i.quantity||0)*(i.costPerUnit||0)),0); }
-function lowStockItems(){ return state.stock.filter(s=> (Number(s.quantity)||0) <= (Number(s.minStock)||0)); }
+function cartuchoGroupKey(item){ return `${(item.numeracao||'').trim()}${(item.configuracao||'').trim()}`.toUpperCase(); }
+function cartuchoGroupItems(key){ return state.stock.filter(s=>s.category==='cartucho' && cartuchoGroupKey(s)===key); }
+function cartuchoGroupTotal(key){ return cartuchoGroupItems(key).reduce((sum,s)=>sum+(Number(s.quantity)||0),0); }
+function cartuchoGroupMin(key){ return Math.max(0, ...cartuchoGroupItems(key).map(s=>Number(s.minStock)||0)); }
+function isLowStock(s){
+  if(s.category==='cartucho'){
+    const key = cartuchoGroupKey(s);
+    if(key) return cartuchoGroupTotal(key) <= cartuchoGroupMin(key);
+  }
+  return (Number(s.quantity)||0) <= (Number(s.minStock)||0);
+}
+function lowStockItems(){ return state.stock.filter(isLowStock); }
+async function syncCartuchoGroupMin(key, minStock, exceptId){
+  if(!key) return;
+  for(const s of cartuchoGroupItems(key)){
+    if(s.id===exceptId) continue;
+    if((Number(s.minStock)||0) !== (Number(minStock)||0)) await colUpdate('stock', s.id, {minStock});
+  }
+}
 
 /* ============ RENDER SHELL ============ */
 function renderNav(){
@@ -1582,7 +1633,7 @@ function openHistoricoComprasModal(){
 function renderEstoque(){
   const cats = ['todos','baixo', ...Object.keys(TIPOS)];
   const listStock = state.stock.filter(s=>s.category!==MIMO_CATEGORY);
-  const low = listStock.filter(s=> (Number(s.quantity)||0) <= (Number(s.minStock)||0));
+  const low = listStock.filter(isLowStock);
   const lowSorted = [...low].sort((a,b)=>stockUrgency(a)-stockUrgency(b));
   let filtered, sorted;
   if(stockFilter==='baixo'){
@@ -1615,7 +1666,7 @@ function renderEstoque(){
   `;
 }
 function stockRow(s){
-  const low = (Number(s.quantity)||0) <= (Number(s.minStock)||0);
+  const low = isLowStock(s);
   return `
     <div class="row-card stock-row">
       <div class="stock-row-info">
@@ -1655,7 +1706,10 @@ function shoppingRow(s){
           ${s.note?`<div class="row-sub">${escapeHtml(s.note)}</div>`:''}
         </div>
       </div>
-      <button class="icon-btn" data-action="deleteShopping" data-id="${s.id}">${ICONS.trash}</button>
+      <div class="row-actions">
+        <button class="icon-btn" data-action="openShoppingForm" data-id="${s.id}">${ICONS.edit}</button>
+        <button class="icon-btn" data-action="deleteShopping" data-id="${s.id}">${ICONS.trash}</button>
+      </div>
     </div>`;
 }
 
@@ -2134,10 +2188,9 @@ function openCartaoPessoalModal(){
     <div class="section-title" style="margin-top:0;">Adicionar gasto avulso</div>
     <form id="reembolsoManualForm">
       <div class="field"><label>Descrição</label><input name="desc" required placeholder="Ex.: Máquina de tatuar nova" /></div>
-      <div class="field-row">
-        <div class="field"><label>Valor</label><input name="value" type="number" step="0.01" min="0" required /></div>
-        ${dateFieldHtml('dateBR', todayISO(), 'Data que vou pagar no cartão')}
-      </div>
+      <div class="field"><label>Valor</label><input name="value" type="number" step="0.01" min="0" required /></div>
+      ${formaPagamentoHtml('manualReemb')}
+      <div id="manualReembVencimentoWrap">${dateFieldHtml('dateBR', todayISO(), 'Data que vou pagar no cartão')}</div>
       <button type="submit" class="btn secondary block">${ICONS.plus} Adicionar</button>
     </form>
     <div class="section-title">Pendentes</div>
@@ -2147,7 +2200,7 @@ function openCartaoPessoalModal(){
       <div class="row-card" style="flex-direction:column;align-items:stretch;gap:8px;">
         <div>
           <div class="row-title">${escapeHtml(r.desc)}</div>
-          <div class="row-sub">vence ${fmtDateBR(r.date)} · ${origemLabel(r.origem)} · total ${brl(r.value)}${pago>0?` · já pago ${brl(pago)} · falta ${brl(saldo)}`:''}</div>
+          <div class="row-sub">${r.forma==='debito'?'gasto em':'vence'} ${fmtDateBR(r.date)} · ${origemLabel(r.origem)}${r.forma?` · ${r.forma==='debito'?'Débito/Pix':'Crédito'}`:''} · total ${brl(r.value)}${pago>0?` · já pago ${brl(pago)} · falta ${brl(saldo)}`:''}</div>
         </div>
         <div class="consump-row" style="grid-template-columns:1fr auto;">
           <input type="number" step="0.01" min="0" max="${r.value}" data-id="${r.id}" data-role="pagoInput" value="${pago>0?pago:''}" placeholder="Quanto você já pagou" />
@@ -2161,13 +2214,16 @@ function openCartaoPessoalModal(){
       </div>`).join('')}</div>`:``}
   `);
   wireDateTimeFields(document.getElementById('reembolsoManualForm'));
+  const getManualForma = wireFormaPagamento('manualReemb', 'manualReembVencimentoWrap');
   const verClassificarBtn = document.getElementById('verClassificarBtn');
   if(verClassificarBtn) verClassificarBtn.onclick = ()=>{ closeModal(); openClassificarList(); };
   document.getElementById('reembolsoManualForm').onsubmit = async (e)=>{
     e.preventDefault(); const f=e.target;
+    const forma = getManualForma();
+    const date = forma==='credito' ? (f.elements.dateBR.value || todayISO()) : todayISO();
     await colAdd('reembolsos', {
       desc: f.elements.desc.value.trim(), value: round2(parseFloat(f.elements.value.value)||0),
-      origem:'manual', date: f.elements.dateBR.value || todayISO(), pagoValor:0, createdAt:new Date().toISOString(),
+      origem:'manual', date, forma, pagoValor:0, createdAt:new Date().toISOString(),
     });
     openCartaoPessoalModal();
   };
@@ -2631,14 +2687,18 @@ function openExpenseForm(eventId){
           <div class="check-sub">Entra em "Cartão pessoal" pra você lembrar de se reembolsar</div>
         </div>
       </label>
-      <div id="despesaCartaoVencimentoWrap" style="display:none;">${dateFieldHtml('cartaoVencimentoBR', todayISO(), 'Data que vou pagar no cartão')}</div>
+      <div id="despesaCartaoFormaWrap" style="display:none;">
+        ${formaPagamentoHtml('despesaCartao')}
+        <div id="despesaCartaoVencimentoWrap">${dateFieldHtml('cartaoVencimentoBR', todayISO(), 'Data que vou pagar no cartão')}</div>
+      </div>
       <button type="submit" class="btn block">Adicionar</button>
     </form>`);
   renderDespesaBody(DESPESA_TIPOS[0]);
   document.getElementById('despesaTipo').onchange = e=> renderDespesaBody(e.target.value);
   wireDateTimeFields(document.getElementById('expenseForm'));
+  const getDespesaForma = wireFormaPagamento('despesaCartao', 'despesaCartaoVencimentoWrap');
   document.getElementById('despesaCartaoPessoal').onchange = e=>{
-    document.getElementById('despesaCartaoVencimentoWrap').style.display = e.target.checked ? '' : 'none';
+    document.getElementById('despesaCartaoFormaWrap').style.display = e.target.checked ? '' : 'none';
   };
   document.getElementById('expenseForm').onsubmit = async (e)=>{
     e.preventDefault(); const f=e.target;
@@ -2661,7 +2721,7 @@ function openExpenseForm(eventId){
     const ev = state.events.find(x=>x.id===eventId);
     const expenses = [...(ev.expenses||[]), {id:uid(), desc, value, tipo}];
     await colUpdate('events', eventId, {expenses});
-    if(f.elements.cartaoPessoal.checked) await addReembolso(desc, value, 'evento', f.elements.cartaoVencimentoBR.value);
+    if(f.elements.cartaoPessoal.checked) await addReembolso(desc, value, 'evento', f.elements.cartaoVencimentoBR.value, getDespesaForma());
     closeModal();
   };
 }
@@ -2839,6 +2899,34 @@ function refreshStockFormDynamic(tipoKey, item){
     extrasContainer.addEventListener('input', recompute);
     extrasContainer.addEventListener('change', recompute);
   }
+  const minLabel = document.getElementById('minStockLabel');
+  const groupHintEl = document.getElementById('minStockGroupHint');
+  if(tipoKey==='cartucho'){
+    const extrasContainer = document.getElementById('tipoExtraFields');
+    const updateCartuchoHint = ()=>{
+      const numEl = extrasContainer.querySelector('[name="ef_numeracao"]');
+      const cfgEl = extrasContainer.querySelector('[name="ef_configuracao"]');
+      const key = `${(numEl?numEl.value:'').trim()}${(cfgEl?cfgEl.value:'').trim()}`.toUpperCase();
+      if(minLabel) minLabel.textContent = 'Estoque mínimo da configuração' + (key?` (${key})`:'');
+      if(!key){ if(groupHintEl) groupHintEl.textContent = 'Vale pra todas as marcas com essa numeração + configuração — não precisa ser a mesma marca.'; return; }
+      const otherItems = cartuchoGroupItems(key).filter(s=>!item || s.id!==item.id);
+      const groupMin = cartuchoGroupMin(key);
+      const minEl = document.querySelector('#stockForm [name="minStock"]');
+      if(minEl && !minEl.dataset.touched && otherItems.length){ minEl.value = groupMin; }
+      if(groupHintEl){
+        groupHintEl.textContent = otherItems.length
+          ? `Vale pra todas as marcas ${key} — já tem ${otherItems.length} marca${otherItems.length>1?'s':''} com ${cartuchoGroupTotal(key)} un no total nessa configuração.`
+          : `Vale pra todas as marcas com essa numeração + configuração — não precisa ser a mesma marca.`;
+      }
+    };
+    extrasContainer.addEventListener('input', updateCartuchoHint);
+    updateCartuchoHint();
+    const minElTouch = document.querySelector('#stockForm [name="minStock"]');
+    if(minElTouch) minElTouch.addEventListener('input', e=>{ e.target.dataset.touched='1'; });
+  } else {
+    if(minLabel) minLabel.textContent = 'Estoque mínimo';
+    if(groupHintEl) groupHintEl.textContent = '';
+  }
 }
 function openStockForm(id, opts){
   opts = opts || {};
@@ -2866,9 +2954,10 @@ function openStockForm(id, opts){
       ` : `
       <div class="field-row">
         <div class="field"><label>Custo total pago (R$)</label><input name="custoTotalPago" type="number" step="0.01" min="0" value="" required /></div>
-        <div class="field"><label>Estoque mínimo</label><input name="minStock" type="number" step="0.01" min="0" value="" /></div>
+        <div class="field" id="minStockFieldWrap"><label id="minStockLabel">Estoque mínimo</label><input name="minStock" type="number" step="0.01" min="0" value="" /></div>
       </div>`}
-      ${item? `<div class="field"><label>Estoque mínimo</label><input name="minStock" type="number" step="0.01" min="0" value="${item.minStock}" /></div>` : ''}
+      ${item? `<div class="field" id="minStockFieldWrap"><label id="minStockLabel">Estoque mínimo</label><input name="minStock" type="number" step="0.01" min="0" value="${item.minStock}" /></div>` : ''}
+      <div id="minStockGroupHint" class="hint"></div>
       <div id="tipoHint" class="hint"></div>
       <label class="check-card" for="stockCartaoPessoal">
         <input type="checkbox" id="stockCartaoPessoal" name="cartaoPessoal" />
@@ -2877,7 +2966,10 @@ function openStockForm(id, opts){
           <div class="check-sub">Entra em "Cartão pessoal" pra você lembrar de se reembolsar</div>
         </div>
       </label>
-      <div id="stockCartaoVencimentoWrap" style="display:none;">${dateFieldHtml('cartaoVencimentoBR', todayISO(), 'Data que vou pagar no cartão')}</div>
+      <div id="stockCartaoFormaWrap" style="display:none;">
+        ${formaPagamentoHtml('stockCartao')}
+        <div id="stockCartaoVencimentoWrap">${dateFieldHtml('cartaoVencimentoBR', todayISO(), 'Data que vou pagar no cartão')}</div>
+      </div>
       <button type="submit" class="btn block">${item?'Salvar alterações':'Adicionar ao estoque'}</button>
     </form>`);
   refreshStockFormDynamic(initialTipo, item);
@@ -2888,8 +2980,9 @@ function openStockForm(id, opts){
   document.getElementById('tipoSelect').onchange = (e)=>{ refreshStockFormDynamic(e.target.value, null); };
   document.querySelector('#stockForm [name="minStock"]').addEventListener('input', e=>{ e.target.dataset.touched='1'; });
   wireDateTimeFields(document.getElementById('stockForm'));
+  const getStockForma = wireFormaPagamento('stockCartao', 'stockCartaoVencimentoWrap');
   document.getElementById('stockCartaoPessoal').onchange = e=>{
-    document.getElementById('stockCartaoVencimentoWrap').style.display = e.target.checked ? '' : 'none';
+    document.getElementById('stockCartaoFormaWrap').style.display = e.target.checked ? '' : 'none';
   };
 
   document.getElementById('stockForm').onsubmit = async (e)=>{
@@ -2909,8 +3002,9 @@ function openStockForm(id, opts){
       if(tipoKey==='sabonete' && unit==='L'){ quantityBought = round2(quantityBought*1000); quantityHave = round2(quantityHave*1000); minStock = round2(minStock*1000); unit='ml'; }
       const costPerUnit = quantityBought>0 ? round4(custoTotalPago/quantityBought) : 0;
       await colUpdate('stock', item.id, {name, category:tipoKey, unit, ...extraValues, quantity:quantityHave, costPerUnit, minStock});
+      if(tipoKey==='cartucho') await syncCartuchoGroupMin(cartuchoGroupKey(extraValues), minStock, item.id);
       await logCompra(name, tipoKey, quantityBought, unit, custoTotalPago);
-      if(f.elements.cartaoPessoal.checked) await addReembolso(name, custoTotalPago, 'estoque', f.elements.cartaoVencimentoBR.value);
+      if(f.elements.cartaoPessoal.checked) await addReembolso(name, custoTotalPago, 'estoque', f.elements.cartaoVencimentoBR.value, getStockForma());
       if(f.dataset.shoppingId) await colUpdate('shopping', f.dataset.shoppingId, {done:true});
       closeModal(); return;
     }
@@ -2923,12 +3017,15 @@ function openStockForm(id, opts){
       const oldQty = existing.quantity||0, oldCost = existing.costPerUnit||0;
       const newQty = round2(oldQty+quantity);
       const newCost = newQty>0 ? round4(((oldQty*oldCost)+(quantity*costPerUnit))/newQty) : costPerUnit;
-      await colUpdate('stock', existing.id, {quantity:newQty, costPerUnit:newCost, minStock: minStock||existing.minStock});
+      const finalMin = minStock||existing.minStock;
+      await colUpdate('stock', existing.id, {quantity:newQty, costPerUnit:newCost, minStock: finalMin});
+      if(tipoKey==='cartucho') await syncCartuchoGroupMin(cartuchoGroupKey(extraValues), finalMin, existing.id);
     } else {
-      await colAdd('stock', {...data, quantity, costPerUnit, minStock, createdAt:new Date().toISOString()});
+      const {id:newId} = await colAdd('stock', {...data, quantity, costPerUnit, minStock, createdAt:new Date().toISOString()});
+      if(tipoKey==='cartucho') await syncCartuchoGroupMin(cartuchoGroupKey(extraValues), minStock, newId);
     }
     await logCompra(name, tipoKey, quantity, unit, custoTotalPago);
-    if(f.elements.cartaoPessoal.checked) await addReembolso(name, custoTotalPago, 'estoque', f.elements.cartaoVencimentoBR.value);
+    if(f.elements.cartaoPessoal.checked) await addReembolso(name, custoTotalPago, 'estoque', f.elements.cartaoVencimentoBR.value, getStockForma());
     if(f.dataset.shoppingId) await colUpdate('shopping', f.dataset.shoppingId, {done:true});
     closeModal();
   };
@@ -3078,19 +3175,22 @@ function openProduceMimoForm(){
 }
 
 /* ---- shopping form ---- */
-function openShoppingForm(){
-  openModal('Adicionar à lista de compras', `
+function openShoppingForm(id){
+  const item = id ? state.shopping.find(x=>x.id===id) : null;
+  openModal(item?'Editar item da lista':'Adicionar à lista de compras', `
     <form id="shoppingForm">
-      <div class="field"><label>Item</label><input name="name" required placeholder="Ex.: Tinta Dynamic Black" /></div>
+      <div class="field"><label>Item</label><input name="name" required placeholder="Ex.: Tinta Dynamic Black" value="${item?escapeHtml(item.name):''}" /></div>
       <div class="field-row">
-        <div class="field"><label>Quantidade (opcional)</label><input name="qty" placeholder="Ex.: 2 potes" /></div>
-        <div class="field"><label>Nota (opcional)</label><input name="note" placeholder="Ex.: loja X" /></div>
+        <div class="field"><label>Quantidade (opcional)</label><input name="qty" placeholder="Ex.: 2 potes" value="${item?escapeHtml(item.qty||''):''}" /></div>
+        <div class="field"><label>Nota (opcional)</label><input name="note" placeholder="Ex.: loja X" value="${item?escapeHtml(item.note||''):''}" /></div>
       </div>
-      <button type="submit" class="btn block">Adicionar</button>
+      <button type="submit" class="btn block">${item?'Salvar alterações':'Adicionar'}</button>
     </form>`);
   document.getElementById('shoppingForm').onsubmit = async (e)=>{
     e.preventDefault(); const f=e.target;
-    await colAdd('shopping', {name:f.elements.name.value.trim(), qty:f.elements.qty.value.trim(), note:f.elements.note.value.trim(), done:false, createdAt:new Date().toISOString()});
+    const data = {name:f.elements.name.value.trim(), qty:f.elements.qty.value.trim(), note:f.elements.note.value.trim()};
+    if(item) await colUpdate('shopping', item.id, data);
+    else await colAdd('shopping', {...data, done:false, createdAt:new Date().toISOString()});
     closeModal();
   };
 }
@@ -3145,7 +3245,7 @@ const actions = {
   openRestockForm: (id)=> openRestockForm(id),
   deleteStock: (id)=> deleteStock(id),
   setStockFilter: (id, btn)=>{ stockFilter = btn.dataset.cat; renderApp(); },
-  openShoppingForm: ()=> openShoppingForm(),
+  openShoppingForm: (id)=> openShoppingForm(id),
   toggleShopping: (id)=> toggleShopping(id),
   confirmShoppingPurchase: (id)=> confirmShoppingPurchase(id),
   deleteShopping: (id)=> deleteShopping(id),
