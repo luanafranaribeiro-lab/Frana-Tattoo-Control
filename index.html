@@ -430,7 +430,7 @@
   .greet h1{font-size:27px;}
   .greet p{color:var(--text-muted);font-size:13.5px;margin-top:5px;}
 
-  #syncStatus{position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:60;background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border);border-radius:999px;padding:5px 13px;font-size:11.5px;font-weight:600;box-shadow:0 2px 10px rgba(0,0,0,.18);pointer-events:none;max-width:92vw;text-align:center;}
+  #syncStatus{position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:60;background:var(--surface-2);color:var(--text-muted);border:1px solid var(--border);border-radius:999px;padding:5px 13px;font-size:11.5px;font-weight:600;box-shadow:0 2px 10px rgba(0,0,0,.18);cursor:pointer;max-width:92vw;text-align:center;}
   #syncStatus[data-kind="ok"]{color:var(--positive);border-color:var(--positive);}
   #syncStatus[data-kind="warn"]{color:var(--warning);border-color:var(--warning);}
   .app-version{text-align:center;font-size:10.5px;color:var(--text-muted);opacity:.7;padding:22px 0 8px;}
@@ -699,7 +699,7 @@ function monthLabel(ym){ const [y,m]=ym.split('-').map(Number); const d=new Date
 function sortByDateDesc(a,b){ return (b.date||'').localeCompare(a.date||''); }
 
 /* ============ DB LAYER (Supabase + modo offline) ============ */
-const APP_VERSION = '2026.09.28-offline-1';
+const APP_VERSION = '2026.10.06-1';
 const SUPABASE_URL = 'https://bwomclwfmenrhhmpwzom.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_U1XxtSGN3BFkOrEoQSdyLQ_h6sLe-Vy';
 const COLS = ['stock','tattoos','events','flashes','shopping','agenda','settings','reembolsos','compras'];
@@ -718,6 +718,7 @@ let hadOutage = false;
 let lastSyncError = false;
 let justSynced = false;
 let justSyncedTimer = null;
+let lastSyncErrorDetail = null;
 let flushSlow = false;
 let flushSlowTimer = null;
 
@@ -815,15 +816,53 @@ function syncStatusInfo(){
 }
 function renderSyncStatus(){
   let el = document.getElementById('syncStatus');
-  if(!el){ el = document.createElement('div'); el.id = 'syncStatus'; document.body.appendChild(el); }
+  if(!el){
+    el = document.createElement('div'); el.id = 'syncStatus';
+    el.addEventListener('click', openSyncDiagModal);
+    document.body.appendChild(el);
+  }
   const appEl = document.getElementById('app');
   const info = (appEl && appEl.style.display!=='none') ? syncStatusInfo() : null;
   if(!info){ el.style.display = 'none'; el.textContent = ''; return; }
   el.textContent = info.text; el.dataset.kind = info.kind; el.style.display = '';
 }
+function openSyncDiagModal(){
+  const n = queue.length;
+  const byType = {};
+  queue.forEach(o=>{ const k = `${o.col} · ${o.op}`; byType[k] = (byType[k]||0)+1; });
+  const listaFila = Object.entries(byType).map(([k,c])=>`<div class="row-sub">${escapeHtml(k)} — ${c}</div>`).join('') || '<div class="row-sub">Nada pendente.</div>';
+  const erro = lastSyncErrorDetail;
+  openModal('Status da sincronização', `
+    <div class="materials-group" style="margin-bottom:14px;">
+      <div class="row-sub">Versão do app</div>
+      <div class="row-title">v${APP_VERSION}</div>
+    </div>
+    <div class="materials-group" style="margin-bottom:14px;">
+      <div class="row-sub">Internet agora</div>
+      <div class="row-title">${navigator.onLine ? 'Conectado' : 'Sem internet'}</div>
+    </div>
+    <div class="materials-group" style="margin-bottom:14px;">
+      <div class="row-sub">Pendente pra enviar (${n})</div>
+      ${listaFila}
+    </div>
+    ${erro ? `
+    <div class="materials-group" style="margin-bottom:14px;">
+      <div class="row-sub">Último erro ao tentar enviar</div>
+      <div class="row-title" style="font-size:13.5px;">${escapeHtml(erro.col)} · ${escapeHtml(erro.op)}${erro.id&&erro.id!=='-'?` (${escapeHtml(erro.id)})`:''}</div>
+      <div class="row-sub">${escapeHtml(erro.message||'')}${erro.code?` · código ${escapeHtml(String(erro.code))}`:''}${erro.status?` · status ${erro.status}`:''}</div>
+    </div>` : ''}
+    <button type="button" class="btn block" id="syncDiagRetryBtn">Tentar sincronizar agora</button>
+  `);
+  document.getElementById('syncDiagRetryBtn').onclick = async ()=>{
+    const btn = document.getElementById('syncDiagRetryBtn');
+    btn.disabled = true; btn.textContent = 'Tentando…';
+    await syncNow({reload:true});
+    closeModal();
+  };
+}
 function markSynced(){
   const show = hadOutage;   // "Sincronizado ✓" só depois de ter ficado sem internet / com erro
-  hadOutage = false; netDown = false; lastSyncError = false;
+  hadOutage = false; netDown = false; lastSyncError = false; lastSyncErrorDetail = null;
   if(!show) return;
   justSynced = true;
   clearTimeout(justSyncedTimer);
@@ -912,13 +951,17 @@ async function flushQueue(){
           handleSessionExpired(); return {sent};
         }
         if(isNetworkError(res.error)){ netDown = true; hadOutage = true; }
-        else { lastSyncError = true; hadOutage = true; console.error('Erro ao sincronizar', op, res.error); }
+        else {
+          lastSyncError = true; hadOutage = true;
+          lastSyncErrorDetail = {op:op.op, col:op.col, id:op.id, message:(res.error&&res.error.message)||String(res.error), code:res.error&&res.error.code, status:res.status};
+          console.error('Erro ao sincronizar', op, res.error);
+        }
         return {sent};
       }
       queue = queue.filter(o=>o.q!==op.q);
       saveQueue(); sent++;
     }
-    netDown = false; lastSyncError = false;
+    netDown = false; lastSyncError = false; lastSyncErrorDetail = null;
     if(sent>0) markSynced();
     return {sent};
   } finally {
@@ -964,7 +1007,7 @@ async function loadAllCollections(){
     return true;
   }catch(e){
     console.error('Erro ao carregar dados do Supabase', e);
-    if(isNetworkError(e)){ netDown = true; hadOutage = true; } else lastSyncError = true;
+    if(isNetworkError(e)){ netDown = true; hadOutage = true; } else { lastSyncError = true; lastSyncErrorDetail = {op:'carregar', col:'-', id:'-', message:(e&&e.message)||String(e), code:e&&e.code, status:e&&e.status}; }
     renderSyncStatus();
     return false;
   }
@@ -1210,7 +1253,7 @@ function renderApp(){
   else if(activeTab==='eventos') main.innerHTML = activeEventId ? renderEventDetail() : renderEventsList();
   else if(activeTab==='estoque') main.innerHTML = renderEstoque();
   else if(activeTab==='compras') main.innerHTML = renderCompras();
-  main.insertAdjacentHTML('beforeend', `<div class="app-version">Frana Tattoo Control · v${APP_VERSION}</div>`);
+  main.insertAdjacentHTML('beforeend', `<div class="app-version" data-action="openSyncDiagModal" style="cursor:pointer;">Frana Tattoo Control · v${APP_VERSION}</div>`);
 }
 
 /* ============ CONN BANNER ============ */
@@ -3226,6 +3269,7 @@ const actions = {
   openAReceberModal: ()=> openAReceberModal(),
   openCartaoPessoalModal: ()=> openCartaoPessoalModal(),
   openClassificarList: ()=> openClassificarList(),
+  openSyncDiagModal: ()=> openSyncDiagModal(),
   goToCompras: ()=>{ activeTab='compras'; renderApp(); },
   openHistoricoComprasModal: ()=> openHistoricoComprasModal(),
   selectMonthChart: (id)=> selectMonthChart(id),
