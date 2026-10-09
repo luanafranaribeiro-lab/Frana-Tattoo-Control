@@ -1500,7 +1500,7 @@ function tattooRow(t, hideEventBadge){
     <div class="row-card row-card-tinted">
       <div>
         <div class="row-title">${escapeHtml(t.client||'Sem identificação')} ${ev?`<span class="badge accent" style="margin-left:6px;">${escapeHtml(ev.name)}</span>`:''}</div>
-        <div class="row-sub">${fmtDateBR(t.date)} · ${t.type||'—'} · custo ${brl(t.costTotal||0)} · lucro <span style="color:${profit>=0?'var(--positive)':'var(--danger)'}">${brl(profit)}</span></div>
+        <div class="row-sub">${fmtDateBR(t.date)} · ${t.type||'—'}${t.flashSize==='grande'?' (Grande · 1/6 A4)':''} · custo ${brl(t.costTotal||0)} · lucro <span style="color:${profit>=0?'var(--positive)':'var(--danger)'}">${brl(profit)}</span></div>
         ${extras?`<div class="row-sub">${escapeHtml(extras)}</div>`:''}
       </div>
       <div class="row-actions">
@@ -1639,7 +1639,7 @@ function renderEventDetail(){
     <div class="section-title">Flashes do evento</div>
     ${flashTattoos.length? `<div class="list">${flashTattoos.slice().reverse().map(t=>`
       <div class="row-card">
-        <div><div class="row-title">Flash${t.instagram?` · ${escapeHtml(t.instagram)}`:''}</div><div class="row-sub">custo ${brl(t.costTotal||0)}</div><div class="row-sub" style="opacity:.75;">${escapeHtml(summarizeConsumptionNames(t.consumptions)||'sem materiais registrados')}</div></div>
+        <div><div class="row-title">Flash${t.flashSize==='grande'?' · Grande (1/6 A4)':''}${t.instagram?` · ${escapeHtml(t.instagram)}`:''}</div><div class="row-sub">custo ${brl(t.costTotal||0)}</div><div class="row-sub" style="opacity:.75;">${escapeHtml(summarizeConsumptionNames(t.consumptions)||'sem materiais registrados')}</div></div>
         <div class="row-actions"><span class="badge">${brl(t.value||0)}</span><button class="badge badge-btn ${isPago(t)?'ok':'danger'}" data-action="toggleTattooPago" data-id="${t.id}">${isPago(t)?'Pago':'Não pago'}</button><button class="icon-btn" data-action="openTattooForm" data-id="${t.id}">${ICONS.edit}</button><button class="icon-btn" data-action="deleteTattoo" data-id="${t.id}">${ICONS.trash}</button></div>
       </div>`).join('')}</div>` : `<div class="empty">Nenhum flash registrado neste evento ainda.</div>`}
 
@@ -2815,6 +2815,7 @@ function deleteExpense(eventId, expId){
 let flashRapidaCartuchos = [];
 let flashRapidaTintas = [];
 let flashRapidaBranco = false;
+let flashRapidaSize = 'padrao';
 let lastFlashCartuchoId = '';
 let flashRapidaSessionCount = 0;
 function findWhiteTinta(){ return state.stock.find(s=>s.category==='tinta' && /branc/i.test((s.cor||'')+(s.name||''))) || null; }
@@ -2888,11 +2889,18 @@ function openFlashRapidaForm(eventId, resetCount){
   const preta = findTintaPreta();
   flashRapidaTintas = [{stockId:preta?preta.id:''}];
   flashRapidaBranco = false;
+  flashRapidaSize = 'padrao';
   openModal('Flash rápida', `
     <form id="flashRapidaForm">
       ${flashRapidaSessionCount>0?`<div class="hint" style="margin-bottom:10px;">${flashRapidaSessionCount} flash(es) salvos nesta sessão.</div>`:''}
+      <div class="field"><label>Tamanho</label>
+        <div id="frSizePicker" style="display:flex;gap:8px;">
+          <button type="button" class="type-opt active" data-size="padrao">Padrão</button>
+          <button type="button" class="type-opt" data-size="grande">Grande (1/6 A4)</button>
+        </div>
+      </div>
       <div class="field"><label>@ Instagram (opcional)</label><input name="instagram" placeholder="@usuario" /></div>
-      <div class="field"><label>Valor</label><input name="value" type="number" step="0.01" min="0" value="120" required /></div>
+      <div class="field"><label>Valor</label><input name="value" id="frValue" type="number" step="0.01" min="0" value="120" required /></div>
       <div class="field"><label>Cartucho</label><div id="frCartuchos"></div></div>
       <div class="field"><label>Tinta</label><div id="frTintas"></div></div>
       <div class="field" style="display:flex;align-items:center;gap:8px;">
@@ -2909,6 +2917,16 @@ function openFlashRapidaForm(eventId, resetCount){
   renderFlashRapidaTintas();
   renderFlashRapidaKit();
   document.getElementById('frBranco').onchange = e=>{ flashRapidaBranco = e.target.checked; renderFlashRapidaKit(); };
+  document.getElementById('frSizePicker').querySelectorAll('.type-opt').forEach(btn=>{
+    btn.onclick = ()=>{
+      document.getElementById('frSizePicker').querySelectorAll('.type-opt').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      flashRapidaSize = btn.dataset.size;
+      const valueInput = document.getElementById('frValue');
+      if(flashRapidaSize==='grande'){ valueInput.value=''; valueInput.placeholder='Valor combinado'; }
+      else { valueInput.value='120'; valueInput.placeholder=''; }
+    };
+  });
   document.getElementById('flashRapidaForm').onsubmit = async (e)=>{
     e.preventDefault(); const f=e.target;
     const value = parseFloat(f.elements.value.value)||0;
@@ -2921,7 +2939,8 @@ function openFlashRapidaForm(eventId, resetCount){
     const costTotal = round2(consumptionsCost(snapshot));
     const data = {
       client:'', date:todayISO(), type:'Flash', value, pago:true,
-      instagram, duracao:'15 min', localCorpo:'',
+      instagram, duracao: flashRapidaSize==='grande' ? '30 min' : '15 min', localCorpo:'',
+      flashSize: flashRapidaSize,
       notes:'', consumptions:snapshot, costTotal, eventId, flashId:null, createdAt:new Date().toISOString(),
     };
     await applyConsumptions(snapshot);
