@@ -220,6 +220,18 @@
   .dash-hero-value.neg{color:var(--danger);}
   .dash-hero-sub{font-size:12px;color:var(--text-muted);margin-top:6px;}
   @media (max-width:560px){.dash-hero{grid-template-columns:1fr;}.dash-hero>div:first-child{border-right:none;border-bottom:1px solid rgba(255,255,255,.15);}.dash-hero-value{font-size:32px;}}
+  .dash-hero-solo{border-radius:var(--radius-l);overflow:hidden;margin-bottom:12px;box-shadow:0 4px 16px rgba(33,89,160,.15);padding:22px;}
+  .dash-hero-solo.pos{background:linear-gradient(150deg, var(--positive) 0%, #0F3D22 130%);color:#fff;}
+  .dash-hero-solo.neg{background:linear-gradient(150deg, var(--danger) 0%, #4A1410 130%);color:#fff;}
+  .dash-hero-solo .dash-hero-label{color:rgba(255,255,255,.82);}
+  .dash-hero-solo .dash-hero-label svg{stroke:#fff;}
+  .dash-hero-solo .dash-hero-value{color:#fff;}
+  .dash-hero-solo .dash-hero-sub{color:rgba(255,255,255,.72);}
+  @media (max-width:560px){.dash-hero-solo .dash-hero-value{font-size:32px;}}
+  .dash-gasto-row{display:flex;justify-content:space-between;align-items:center;padding:13px 16px;margin-bottom:28px;border:1px solid var(--border);border-radius:var(--radius-m);background:linear-gradient(150deg, var(--tint) 0%, var(--surface) 80%);}
+  .dash-gasto-label{display:flex;align-items:center;gap:7px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:700;}
+  .dash-gasto-label svg{width:13px;height:13px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
+  .dash-gasto-value{font-family:var(--font-mono);font-size:17px;font-weight:600;}
 
   .dash-pills{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:28px;min-width:0;}
   @media (max-width:400px){.dash-pills{gap:6px;}}
@@ -691,6 +703,38 @@ function reembolsoSaldo(r){
 }
 function reembolsoPendenteTotal(){
   return round2(state.reembolsos.reduce((s,r)=>s+Math.max(0, reembolsoSaldo(r)),0));
+}
+/* ---- abatimento automático: o que entra de tattoo paga os pendentes do cartão pessoal (mais antigo primeiro) ---- */
+async function applyDebtPaymentFIFO(amount){
+  let remaining = round2(amount||0);
+  if(remaining<=0) return [];
+  const pendentes = state.reembolsos.filter(r=>reembolsoSaldo(r)>0.004).sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  const applied = [];
+  for(const r of pendentes){
+    if(remaining<=0.004) break;
+    const saldo = reembolsoSaldo(r);
+    const pay = round2(Math.min(saldo, remaining));
+    if(pay<=0) continue;
+    const novoPago = round2(reembolsoPago(r)+pay);
+    await colUpdate('reembolsos', r.id, {pagoValor:novoPago, pagoDate:todayISO(), reembolsado:novoPago>=r.value});
+    applied.push({id:r.id, amount:pay});
+    remaining = round2(remaining-pay);
+  }
+  return applied;
+}
+async function reverseDebtPayments(debtPayments){
+  for(const dp of (debtPayments||[])){
+    const r = state.reembolsos.find(x=>x.id===dp.id);
+    if(!r) continue;
+    const novoPago = Math.max(0, round2(reembolsoPago(r)-dp.amount));
+    await colUpdate('reembolsos', r.id, {pagoValor:novoPago, pagoDate: novoPago>0.004 ? (r.pagoDate||todayISO()) : null, reembolsado:novoPago>=r.value});
+  }
+}
+async function syncTattooDebtPayments(prevPago, newPago, value, prevDebtPayments){
+  if(prevPago === newPago) return prevDebtPayments||[];
+  if(newPago) return await applyDebtPaymentFIFO(value||0);
+  if(prevDebtPayments && prevDebtPayments.length) await reverseDebtPayments(prevDebtPayments);
+  return [];
 }
 
 /* ============ STATE ============ */
@@ -1341,23 +1385,15 @@ function renderDashboard(){
       <button class="chip ${all?'active':''}" data-action="dashToggleAll">${all?'Ver por mês':'Ver tudo'}</button>
     </div>
 
-    <div class="dash-hero">
-      <div>
-        <div class="dash-hero-label">${ICONS.needle} Faturamento</div>
-        <div class="dash-hero-value num">${brl(faturamento)}</div>
-        <div class="dash-hero-sub">${tattoosF.length} tattoo${tattoosF.length===1?'':'s'} no período</div>
-      </div>
-      <div class="dash-hero-lucro ${lucro>=0?'pos':'neg'}">
-        <div class="dash-hero-label">${ICONS.check} Lucro estimado</div>
-        <div class="dash-hero-value num">${brl(lucro)}</div>
-        <div class="dash-hero-sub">margem de ${pctFmt(margem)}</div>
-      </div>
+    <div class="dash-hero-solo ${lucro>=0?'pos':'neg'}">
+      <div class="dash-hero-label">${ICONS.check} Lucro estimado</div>
+      <div class="dash-hero-value num">${brl(lucro)}</div>
+      <div class="dash-hero-sub">${tattoosF.length} tattoo${tattoosF.length===1?'':'s'} no período · faturamento ${brl(faturamento)}</div>
     </div>
 
-    <div class="dash-pills">
-      <div class="dash-pill dash-pill-clickable" data-action="openAReceberModal"><div class="dash-pill-label">${ICONS.calendar} A receber</div><div class="dash-pill-value num">${brl(aReceber)}</div></div>
-      <div class="dash-pill"><div class="dash-pill-label">${ICONS.cart} Gasto</div><div class="dash-pill-value num">${brl(gasto)}</div></div>
-      <div class="dash-pill dash-pill-clickable" data-action="openCartaoPessoalModal"><div class="dash-pill-label">${ICONS.card} Reembolso</div><div class="dash-pill-value num">${brl(faturaCartaoMes)}</div></div>
+    <div class="dash-gasto-row">
+      <span class="dash-gasto-label">${ICONS.cart} Gasto no período</span>
+      <span class="dash-gasto-value num">${brl(gasto)}</span>
     </div>
 
     <div id="dashCols">
@@ -1391,6 +1427,8 @@ function renderDashboard(){
           <button class="btn secondary" data-action="openEventForm">${ICONS.plus} Novo evento</button>
           <button class="btn secondary" data-action="openStockForm">${ICONS.plus} Item de estoque</button>
           <button class="btn secondary" data-action="openShoppingForm">${ICONS.plus} Lista de compras${shoppingPending?` (${shoppingPending})`:''}</button>
+          <button class="btn secondary" data-action="openCartaoPessoalModal">${ICONS.card} Cartão pessoal</button>
+          <button class="btn secondary" data-action="openAReceberModal">${ICONS.calendar} A receber</button>
         </div>
       </div>`:''}
       <button class="fab-atalhos ${atalhosOpen?'open':''}" data-action="toggleAtalhos" aria-label="Atalhos">${atalhosOpen?ICONS.close:ICONS.plus}<span>Atalhos</span></button>
@@ -2263,6 +2301,7 @@ function openCartaoPessoalModal(){
     <div class="materials-group" style="margin-bottom:18px;">
       <div style="font-size:11.5px;color:var(--text-muted);">Total a se pagar</div>
       <div style="font-family:var(--font-mono);font-size:28px;font-weight:600;">${brl(total)}</div>
+      <div class="hint" style="margin-top:6px;">Toda vez que você marca uma tattoo como paga, o valor abate automaticamente os pendentes mais antigos daqui.</div>
     </div>
     ${classifGroups.length?`<button type="button" class="add-line-btn" id="verClassificarBtn" style="margin-bottom:14px;">${ICONS.alert} Pra classificar (${classifGroups.length})</button>`:''}
     <div class="section-title" style="margin-top:0;">Adicionar gasto avulso</div>
@@ -2601,11 +2640,13 @@ function openTattooForm({eventId=null, flashId=null, agendaId=null, prefill=null
     if(existing){
       await revertConsumptions(existing.consumptions||[]);
       await applyConsumptions(consumptions);
+      data.debtPayments = await syncTattooDebtPayments(isPago(existing), data.pago, value, existing.debtPayments);
       await colUpdate('tattoos', existing.id, data);
       closeModal();
       return;
     }
     data.createdAt = new Date().toISOString();
+    data.debtPayments = data.pago ? await applyDebtPaymentFIFO(value) : [];
     await applyConsumptions(consumptions);
     const {id} = await colAdd('tattoos', data);
     if(flashId) await colUpdate('flashes', flashId, {status:'sold', tattooId:id});
@@ -2627,13 +2668,17 @@ async function registerFromAgenda(id){
 async function toggleTattooPago(id){
   const t = state.tattoos.find(x=>x.id===id);
   if(!t) return;
-  await colUpdate('tattoos', id, {pago: !isPago(t)});
+  const prevPago = isPago(t);
+  const newPago = !prevPago;
+  const debtPayments = await syncTattooDebtPayments(prevPago, newPago, t.value, t.debtPayments);
+  await colUpdate('tattoos', id, {pago:newPago, debtPayments});
 }
 async function deleteTattoo(id){
   const t = state.tattoos.find(x=>x.id===id);
   if(!t) return;
   confirmModal(`Excluir a tattoo de "${escapeHtml(t.client||'sem nome')}"? Os materiais consumidos voltam para o estoque.`, async ()=>{
     await revertConsumptions(t.consumptions||[]);
+    if(t.debtPayments && t.debtPayments.length) await reverseDebtPayments(t.debtPayments);
     if(t.flashId) await colUpdate('flashes', t.flashId, {status:'available', tattooId:null});
     await colDelete('tattoos', id);
   });
@@ -2722,6 +2767,7 @@ function deleteEvent(id){
     const linked = state.tattoos.filter(t=>t.eventId===id);
     for(const t of linked){
       await revertConsumptions(t.consumptions||[]);
+      if(t.debtPayments && t.debtPayments.length) await reverseDebtPayments(t.debtPayments);
       await colDelete('tattoos', t.id);
     }
     await colDelete('events', id);
@@ -2937,10 +2983,11 @@ function openFlashRapidaForm(eventId, resetCount){
     flashRapidaAutoKitLines().forEach(l=>consumptions.push({stockId:l.item.id, qty:l.qty}));
     const snapshot = buildConsumptionSnapshot(consumptions);
     const costTotal = round2(consumptionsCost(snapshot));
+    const debtPayments = await applyDebtPaymentFIFO(value);
     const data = {
       client:'', date:todayISO(), type:'Flash', value, pago:true,
       instagram, duracao: flashRapidaSize==='grande' ? '30 min' : '15 min', localCorpo:'',
-      flashSize: flashRapidaSize,
+      flashSize: flashRapidaSize, debtPayments,
       notes:'', consumptions:snapshot, costTotal, eventId, flashId:null, createdAt:new Date().toISOString(),
     };
     await applyConsumptions(snapshot);
