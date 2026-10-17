@@ -1538,7 +1538,7 @@ function tattooRow(t, hideEventBadge){
     <div class="row-card row-card-tinted">
       <div>
         <div class="row-title">${escapeHtml(t.client||'Sem identificação')} ${ev?`<span class="badge accent" style="margin-left:6px;">${escapeHtml(ev.name)}</span>`:''}</div>
-        <div class="row-sub">${fmtDateBR(t.date)} · ${t.type||'—'}${t.flashSize==='grande'?' (Grande · 1/6 A4)':''} · custo ${brl(t.costTotal||0)} · lucro <span style="color:${profit>=0?'var(--positive)':'var(--danger)'}">${brl(profit)}</span></div>
+        <div class="row-sub">${fmtDateBR(t.date)} · ${t.type||'—'}${t.qtyFlashes>1?` ×${t.qtyFlashes}`:''}${t.flashSize==='grande'?' (Grande · 1/6 A4)':''} · custo ${brl(t.costTotal||0)} · lucro <span style="color:${profit>=0?'var(--positive)':'var(--danger)'}">${brl(profit)}</span></div>
         ${extras?`<div class="row-sub">${escapeHtml(extras)}</div>`:''}
       </div>
       <div class="row-actions">
@@ -1677,7 +1677,7 @@ function renderEventDetail(){
     <div class="section-title">Flashes do evento</div>
     ${flashTattoos.length? `<div class="list">${flashTattoos.slice().reverse().map(t=>`
       <div class="row-card">
-        <div><div class="row-title">Flash${t.flashSize==='grande'?' · Grande (1/6 A4)':''}${t.instagram?` · ${escapeHtml(t.instagram)}`:''}</div><div class="row-sub">custo ${brl(t.costTotal||0)}</div><div class="row-sub" style="opacity:.75;">${escapeHtml(summarizeConsumptionNames(t.consumptions)||'sem materiais registrados')}</div></div>
+        <div><div class="row-title">Flash${t.qtyFlashes>1?` ×${t.qtyFlashes}`:''}${t.flashSize==='grande'?' · Grande (1/6 A4)':''}${t.instagram?` · ${escapeHtml(t.instagram)}`:''}</div><div class="row-sub">${t.qtyFlashes>1?`${t.qtyFlashes} flashes de ${brl(t.valorUnitario||0)} · `:''}custo ${brl(t.costTotal||0)}</div><div class="row-sub" style="opacity:.75;">${escapeHtml(summarizeConsumptionNames(t.consumptions)||'sem materiais registrados')}</div></div>
         <div class="row-actions"><span class="badge">${brl(t.value||0)}</span><button class="badge badge-btn ${isPago(t)?'ok':'danger'}" data-action="toggleTattooPago" data-id="${t.id}">${isPago(t)?'Pago':'Não pago'}</button><button class="icon-btn" data-action="openTattooForm" data-id="${t.id}">${ICONS.edit}</button><button class="icon-btn" data-action="deleteTattoo" data-id="${t.id}">${ICONS.trash}</button></div>
       </div>`).join('')}</div>` : `<div class="empty">Nenhum flash registrado neste evento ainda.</div>`}
 
@@ -2946,7 +2946,12 @@ function openFlashRapidaForm(eventId, resetCount){
         </div>
       </div>
       <div class="field"><label>@ Instagram (opcional)</label><input name="instagram" placeholder="@usuario" /></div>
-      <div class="field"><label>Valor</label><input name="value" id="frValue" type="number" step="0.01" min="0" value="120" required /></div>
+      <div class="field-row">
+        <div class="field"><label>Valor por flash</label><input name="value" id="frValue" type="number" step="0.01" min="0" value="120" required /></div>
+        <div class="field"><label>Quantidade de flashes</label><input name="qty" id="frQty" type="number" step="1" min="1" value="1" required /></div>
+      </div>
+      <div class="hint" id="frTotalPreview" style="margin-top:-8px;margin-bottom:12px;">Total: ${brl(120)}</div>
+      <div class="hint" style="margin-top:-8px;margin-bottom:12px;">Pra mais de uma flash da mesma pessoa feita com o mesmo cartucho/tinta — o material só é descontado uma vez, não dobra por flash.</div>
       <div class="field"><label>Cartucho</label><div id="frCartuchos"></div></div>
       <div class="field"><label>Tinta</label><div id="frTintas"></div></div>
       <div class="field" style="display:flex;align-items:center;gap:8px;">
@@ -2963,6 +2968,13 @@ function openFlashRapidaForm(eventId, resetCount){
   renderFlashRapidaTintas();
   renderFlashRapidaKit();
   document.getElementById('frBranco').onchange = e=>{ flashRapidaBranco = e.target.checked; renderFlashRapidaKit(); };
+  const updateTotalPreview = ()=>{
+    const v = parseFloat(document.getElementById('frValue').value)||0;
+    const q = Math.max(1, parseInt(document.getElementById('frQty').value)||1);
+    document.getElementById('frTotalPreview').textContent = q>1 ? `Total: ${brl(round2(v*q))} (${q}× ${brl(v)})` : `Total: ${brl(v)}`;
+  };
+  document.getElementById('frValue').addEventListener('input', updateTotalPreview);
+  document.getElementById('frQty').addEventListener('input', updateTotalPreview);
   document.getElementById('frSizePicker').querySelectorAll('.type-opt').forEach(btn=>{
     btn.onclick = ()=>{
       document.getElementById('frSizePicker').querySelectorAll('.type-opt').forEach(b=>b.classList.remove('active'));
@@ -2971,22 +2983,29 @@ function openFlashRapidaForm(eventId, resetCount){
       const valueInput = document.getElementById('frValue');
       if(flashRapidaSize==='grande'){ valueInput.value=''; valueInput.placeholder='Valor combinado'; }
       else { valueInput.value='120'; valueInput.placeholder=''; }
+      updateTotalPreview();
     };
   });
   document.getElementById('flashRapidaForm').onsubmit = async (e)=>{
     e.preventDefault(); const f=e.target;
-    const value = parseFloat(f.elements.value.value)||0;
+    const valorUnitario = parseFloat(f.elements.value.value)||0;
+    const qty = Math.max(1, parseInt(f.elements.qty.value)||1);
+    const value = round2(valorUnitario*qty);
     const instagram = f.elements.instagram.value.trim();
-    const consumptions = [];
-    flashRapidaCartuchos.filter(c=>c.stockId&&c.qty>0).forEach(c=>consumptions.push({stockId:c.stockId, qty:c.qty}));
-    flashRapidaTintas.filter(t=>t.stockId).forEach(t=>consumptions.push({stockId:t.stockId, qty:0.5}));
-    flashRapidaAutoKitLines().forEach(l=>consumptions.push({stockId:l.item.id, qty:l.qty}));
+    const consumptionsBase = [];
+    flashRapidaCartuchos.filter(c=>c.stockId&&c.qty>0).forEach(c=>consumptionsBase.push({stockId:c.stockId, qty:c.qty}));
+    flashRapidaTintas.filter(t=>t.stockId).forEach(t=>consumptionsBase.push({stockId:t.stockId, qty:0.5}));
+    flashRapidaAutoKitLines().forEach(l=>consumptionsBase.push({stockId:l.item.id, qty:l.qty}));
+    const consumptions = consumptionsBase; // mesmo material cobre todas as flashes do lote, não multiplica por quantidade
     const snapshot = buildConsumptionSnapshot(consumptions);
     const costTotal = round2(consumptionsCost(snapshot));
     const debtPayments = await applyDebtPaymentFIFO(value);
+    const minutosUnit = flashRapidaSize==='grande' ? 30 : 15;
+    const totalMin = minutosUnit*qty;
+    const duracao = totalMin>=60 ? `${Math.floor(totalMin/60)}h ${totalMin%60>0?(totalMin%60)+'min':''}`.trim() : `${totalMin} min`;
     const data = {
-      client:'', date:todayISO(), type:'Flash', value, pago:true,
-      instagram, duracao: flashRapidaSize==='grande' ? '30 min' : '15 min', localCorpo:'',
+      client:'', date:todayISO(), type:'Flash', value, valorUnitario, qtyFlashes:qty, pago:true,
+      instagram, duracao, localCorpo:'',
       flashSize: flashRapidaSize, debtPayments,
       notes:'', consumptions:snapshot, costTotal, eventId, flashId:null, createdAt:new Date().toISOString(),
     };
