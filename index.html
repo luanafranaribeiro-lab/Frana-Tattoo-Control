@@ -2537,6 +2537,9 @@ function applyFlashSimplification(isFlash){
 }
 function openTattooForm({eventId=null, flashId=null, agendaId=null, prefill=null, editId=null} = {}){
   const existing = editId ? state.tattoos.find(t=>t.id===editId) : null;
+  if(existing && existing.type==='Flash' && existing.flashSize){
+    return openFlashEditForm(editId); // criada no Flash rápida: edita no mesmo formato, com tamanho/quantidade
+  }
   if(existing){ eventId = existing.eventId||null; flashId = existing.flashId||null; }
   activeBranco = false;
   activeVitaldermCm = 0;
@@ -2928,6 +2931,111 @@ function renderFlashRapidaKit(){
   if(!el) return;
   const lines = flashRapidaAutoKitLines();
   el.innerHTML = lines.length? lines.map(l=>`<div class="row-sub">${escapeHtml(l.item.name)} — ${l.qty} ${UNIT_LABELS[l.item.unit]||l.item.unit}</div>`).join('') : `<div class="row-sub">Nenhum item automático configurado ainda (cadastre Vitalderm, Batoque e o Mimo pronto).</div>`;
+}
+function flashKitItemIds(){
+  // ids de itens que são sempre recalculados automaticamente pelo kit (não editáveis a dedo)
+  const ids = [];
+  const batoque = findStockByCategory('batoque'); if(batoque) ids.push(batoque.id);
+  const vitalderm = findStockByCategory('vitalderm'); if(vitalderm) ids.push(vitalderm.id);
+  const mimo = getMimoItem(); if(mimo) ids.push(mimo.id);
+  const filmeP = findPlasticoFilme('P'); if(filmeP) ids.push(filmeP.id);
+  const gilete = findStockByCategory('gilete'); if(gilete) ids.push(gilete.id);
+  const lenco = findPapel('Lenço'); if(lenco) ids.push(lenco.id);
+  const sabonete = findStockByCategory('sabonete'); if(sabonete) ids.push(sabonete.id);
+  const papelVegetal = findPapel('Papel vegetal'); if(papelVegetal) ids.push(papelVegetal.id);
+  const white = findWhiteTinta(); if(white) ids.push(white.id);
+  const copinho = findCopinho(); if(copinho) ids.push(copinho.id);
+  return ids;
+}
+function openFlashEditForm(id){
+  const t = state.tattoos.find(x=>x.id===id);
+  if(!t) return;
+  const white = findWhiteTinta(), copinho = findCopinho();
+  const kitIds = flashKitItemIds();
+  const cons = (t.consumptions||[]).map(c=>({stockId:c.stockId, qty:c.qty}));
+  flashRapidaBranco = !!(white && cons.some(c=>c.stockId===white.id)) || !!(copinho && cons.some(c=>c.stockId===copinho.id));
+  flashRapidaSize = t.flashSize || 'padrao';
+  flashRapidaCartuchos = [];
+  flashRapidaTintas = [];
+  cons.forEach(c=>{
+    if(kitIds.includes(c.stockId)) return; // item automático do kit, recalculado na hora
+    const it = state.stock.find(s=>s.id===c.stockId);
+    if(it && it.category==='cartucho') flashRapidaCartuchos.push({stockId:c.stockId, qty:c.qty});
+    else if(it && it.category==='tinta') flashRapidaTintas.push({stockId:c.stockId});
+  });
+  if(!flashRapidaCartuchos.length) flashRapidaCartuchos = [{stockId:lastFlashCartuchoId||'', qty:1}];
+  if(!flashRapidaTintas.length){ const preta = findTintaPreta(); flashRapidaTintas = [{stockId:preta?preta.id:''}]; }
+  openModal('Editar flash', `
+    <form id="flashRapidaForm">
+      <div class="field"><label>Tamanho</label>
+        <div id="frSizePicker" style="display:flex;gap:8px;">
+          <button type="button" class="type-opt ${flashRapidaSize==='padrao'?'active':''}" data-size="padrao">Padrão</button>
+          <button type="button" class="type-opt ${flashRapidaSize==='grande'?'active':''}" data-size="grande">Grande (1/6 A4)</button>
+        </div>
+      </div>
+      <div class="field"><label>@ Instagram (opcional)</label><input name="instagram" value="${escapeHtml(t.instagram||'')}" placeholder="@usuario" /></div>
+      <div class="field-row">
+        <div class="field"><label>Valor por flash</label><input name="value" id="frValue" type="number" step="0.01" min="0" value="${t.valorUnitario!=null?t.valorUnitario:(t.value||0)}" required /></div>
+        <div class="field"><label>Quantidade de flashes</label><input name="qty" id="frQty" type="number" step="1" min="1" value="${t.qtyFlashes||1}" required /></div>
+      </div>
+      <div class="hint" id="frTotalPreview" style="margin-top:-8px;margin-bottom:12px;"></div>
+      <div class="field"><label>Cartucho</label><div id="frCartuchos"></div></div>
+      <div class="field"><label>Tinta</label><div id="frTintas"></div></div>
+      <div class="field" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" name="branco" id="frBranco" ${flashRapidaBranco?'checked':''} style="width:auto;" />
+        <label for="frBranco" style="margin:0;">Tinta branca — Detalhe branco · 0,5 ml + copinho com água</label>
+      </div>
+      <details class="field">
+        <summary style="cursor:pointer;color:var(--text-muted);font-size:12.5px;font-weight:600;">Ver kit automático</summary>
+        <div id="frKitPreview" style="margin-top:8px;"></div>
+      </details>
+      <button type="submit" class="btn block">Salvar alterações</button>
+    </form>`);
+  renderFlashRapidaCartuchos();
+  renderFlashRapidaTintas();
+  renderFlashRapidaKit();
+  const updateTotalPreview = ()=>{
+    const v = parseFloat(document.getElementById('frValue').value)||0;
+    const q = Math.max(1, parseInt(document.getElementById('frQty').value)||1);
+    document.getElementById('frTotalPreview').textContent = q>1 ? `Total: ${brl(round2(v*q))} (${q}× ${brl(v)})` : `Total: ${brl(v)}`;
+  };
+  updateTotalPreview();
+  document.getElementById('frValue').addEventListener('input', updateTotalPreview);
+  document.getElementById('frQty').addEventListener('input', updateTotalPreview);
+  document.getElementById('frBranco').onchange = e=>{ flashRapidaBranco = e.target.checked; renderFlashRapidaKit(); };
+  document.getElementById('frSizePicker').querySelectorAll('.type-opt').forEach(btn=>{
+    btn.onclick = ()=>{
+      document.getElementById('frSizePicker').querySelectorAll('.type-opt').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      flashRapidaSize = btn.dataset.size;
+    };
+  });
+  document.getElementById('flashRapidaForm').onsubmit = async (e)=>{
+    e.preventDefault(); const f=e.target;
+    const valorUnitario = parseFloat(f.elements.value.value)||0;
+    const qty = Math.max(1, parseInt(f.elements.qty.value)||1);
+    const value = round2(valorUnitario*qty);
+    const instagram = f.elements.instagram.value.trim();
+    const consumptions = [];
+    flashRapidaCartuchos.filter(c=>c.stockId&&c.qty>0).forEach(c=>consumptions.push({stockId:c.stockId, qty:c.qty}));
+    flashRapidaTintas.filter(x=>x.stockId).forEach(x=>consumptions.push({stockId:x.stockId, qty:0.5}));
+    flashRapidaAutoKitLines().forEach(l=>consumptions.push({stockId:l.item.id, qty:l.qty}));
+    const snapshot = buildConsumptionSnapshot(consumptions);
+    const costTotal = round2(consumptionsCost(snapshot));
+    const minutosUnit = flashRapidaSize==='grande' ? 30 : 15;
+    const totalMin = minutosUnit*qty;
+    const duracao = totalMin>=60 ? `${Math.floor(totalMin/60)}h ${totalMin%60>0?(totalMin%60)+'min':''}`.trim() : `${totalMin} min`;
+    await revertConsumptions(t.consumptions||[]);
+    await applyConsumptions(snapshot);
+    // flash é sempre paga na hora; se o valor mudou, desfaz o abatimento antigo e refaz com o valor novo
+    if(t.debtPayments && t.debtPayments.length) await reverseDebtPayments(t.debtPayments);
+    const debtPayments = await applyDebtPaymentFIFO(value);
+    await colUpdate('tattoos', id, {
+      value, valorUnitario, qtyFlashes:qty, instagram, duracao,
+      flashSize: flashRapidaSize, consumptions:snapshot, costTotal, debtPayments,
+    });
+    closeModal();
+  };
 }
 function openFlashRapidaForm(eventId, resetCount){
   if(resetCount!==false) flashRapidaSessionCount = 0;
