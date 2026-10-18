@@ -1293,6 +1293,8 @@ function consumptionsCost(consumptions){ return consumptions.reduce((s,c)=>s+(c.
 /* ============ DERIVED ============ */
 function tattooProfit(t){ return round2((t.value||0) - (t.costTotal||0)); }
 function eventTattoos(eventId){ return state.tattoos.filter(t=>t.eventId===eventId); }
+function piecesCount(t){ return t.type==='Flash' ? (t.qtyFlashes||1) : 1; } // uma "flash rápida" com quantidade >1 conta como N peças
+function flashPiecesCount(tattoos){ return tattoos.filter(t=>t.type==='Flash').reduce((s,t)=>s+(t.qtyFlashes||1),0); }
 function eventExpensesTotal(ev){ return (ev.expenses||[]).reduce((s,e)=>s+(e.value||0),0); }
 function eventFaturamento(eventId){ return eventTattoos(eventId).reduce((s,t)=>s+(t.value||0),0); }
 function eventMateriais(eventId){ return eventTattoos(eventId).reduce((s,t)=>s+(t.costTotal||0),0); }
@@ -1621,7 +1623,7 @@ function renderEventsList(){
       <div class="row-card ${past?'event-row-past':''}" data-action="openEventDetail" data-id="${ev.id}" style="cursor:pointer;">
         <div>
           <div class="row-title">${past?`${ICONS.check} `:''}${escapeHtml(ev.name)}</div>
-          <div class="row-sub">${fmtDateBR(ev.date)}${ev.location?' · '+escapeHtml(ev.location):''} · ${eventTattoos(ev.id).filter(t=>t.type==='Flash').length} flashes · faturamento ${brl(fat)}</div>
+          <div class="row-sub">${fmtDateBR(ev.date)}${ev.location?' · '+escapeHtml(ev.location):''} · ${flashPiecesCount(eventTattoos(ev.id))} flashes · faturamento ${brl(fat)}</div>
         </div>
         <span class="badge ${lucro>=0?'ok':'danger'}">lucro ${brl(lucro)}</span>
       </div>`;
@@ -1656,8 +1658,8 @@ function renderEventDetail(){
     <div class="dash-hero" style="margin-bottom:12px;">
       <div>
         <div class="dash-hero-label">${ICONS.flash} Realizadas</div>
-        <div class="dash-hero-value num">${tattoos.length}</div>
-        <div class="dash-hero-sub">${flashTattoos.length} flash${flashTattoos.length===1?'':'es'}${otherTattoos.length?` · ${otherTattoos.length} outra${otherTattoos.length===1?'':'s'}`:''}</div>
+        <div class="dash-hero-value num">${flashPiecesCount(flashTattoos)+otherTattoos.length}</div>
+        <div class="dash-hero-sub">${flashPiecesCount(flashTattoos)} flash${flashPiecesCount(flashTattoos)===1?'':'es'}${otherTattoos.length?` · ${otherTattoos.length} outra${otherTattoos.length===1?'':'s'}`:''}</div>
       </div>
       <div class="dash-hero-lucro ${lucro>=0?'pos':'neg'}">
         <div class="dash-hero-label">${ICONS.check} Lucro</div>
