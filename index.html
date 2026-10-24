@@ -736,6 +736,30 @@ async function syncTattooDebtPayments(prevPago, newPago, value, prevDebtPayments
   if(prevDebtPayments && prevDebtPayments.length) await reverseDebtPayments(prevDebtPayments);
   return [];
 }
+/* ---- sinal de agendamento conta como receita assim que é pago, igual flash ---- */
+function findSinalTattoo(agendaId){ return state.tattoos.find(t=>t.type==='Sinal' && t.agendaId===agendaId) || null; }
+async function syncSinalRevenue(agenda, newSinal){
+  newSinal = round2(newSinal||0);
+  const existing = findSinalTattoo(agenda.id);
+  const oldSinal = existing ? (existing.value||0) : 0;
+  if(newSinal===oldSinal) return;
+  if(existing && existing.debtPayments && existing.debtPayments.length) await reverseDebtPayments(existing.debtPayments);
+  if(newSinal<=0){
+    if(existing) await colDelete('tattoos', existing.id);
+    return;
+  }
+  const debtPayments = await applyDebtPaymentFIFO(newSinal);
+  if(existing){
+    await colUpdate('tattoos', existing.id, {value:newSinal, debtPayments});
+  } else {
+    await colAdd('tattoos', {
+      client: agenda.client||'', date: todayISO(), type:'Sinal', value:newSinal, pago:true,
+      instagram:'', duracao:'', localCorpo:'', notes:'Sinal de agendamento',
+      consumptions:[], costTotal:0, eventId:null, flashId:null, agendaId:agenda.id, debtPayments,
+      createdAt:new Date().toISOString(),
+    });
+  }
+}
 
 /* ============ STATE ============ */
 const state = { stock:[], tattoos:[], events:[], flashes:[], shopping:[], agenda:[], settings:[], reembolsos:[], compras:[] };
@@ -1390,7 +1414,7 @@ function renderDashboard(){
     <div class="dash-hero-solo ${lucro>=0?'pos':'neg'}">
       <div class="dash-hero-label">${ICONS.check} Lucro estimado</div>
       <div class="dash-hero-value num">${brl(lucro)}</div>
-      <div class="dash-hero-sub">${tattoosF.length} tattoo${tattoosF.length===1?'':'s'} no período · faturamento ${brl(faturamento)}</div>
+      <div class="dash-hero-sub">${tattoosF.filter(t=>t.type!=='Sinal').length} tattoo${tattoosF.filter(t=>t.type!=='Sinal').length===1?'':'s'} no período · faturamento ${brl(faturamento)}</div>
     </div>
 
     <div class="dash-gasto-row">
@@ -2669,7 +2693,8 @@ function openTattooForm({eventId=null, flashId=null, agendaId=null, prefill=null
 async function registerFromAgenda(id){
   const a = state.agenda.find(x=>x.id===id);
   if(!a) return;
-  openTattooForm({agendaId:id, prefill:{client:a.client, date:a.date>=todayISO()?a.date:todayISO(), value:a.value, tamanho:a.tamanho, dificuldade:a.dificuldade, localCorpo:a.localCorpo, condicaoEspecial:a.condicaoEspecial}});
+  const valorRestante = round2((a.value||0)-(a.sinal||0));
+  openTattooForm({agendaId:id, prefill:{client:a.client, date:a.date>=todayISO()?a.date:todayISO(), value:valorRestante, tamanho:a.tamanho, dificuldade:a.dificuldade, localCorpo:a.localCorpo, condicaoEspecial:a.condicaoEspecial}});
 }
 async function toggleTattooPago(id){
   const t = state.tattoos.find(x=>x.id===id);
@@ -2733,14 +2758,26 @@ function openAgendaForm({editId=null, prefillOrc=null} = {}){
       condicaoEspecial: f.elements.condicaoEspecial.checked,
       notes:f.elements.notes.value.trim(),
     };
-    if(existing) await colUpdate('agenda', existing.id, data);
-    else await colAdd('agenda', {...data, createdAt:new Date().toISOString()});
+    if(existing){
+      await colUpdate('agenda', existing.id, data);
+      await syncSinalRevenue({id:existing.id, client:data.client}, data.sinal);
+    } else {
+      const {id} = await colAdd('agenda', {...data, createdAt:new Date().toISOString()});
+      await syncSinalRevenue({id, client:data.client}, data.sinal);
+    }
     closeModal();
   };
 }
 function editAgenda(id){ openAgendaForm({editId:id}); }
 function deleteAgenda(id){
-  confirmModal('Remover este agendamento?', async ()=>{ await colDelete('agenda', id); });
+  confirmModal('Remover este agendamento?', async ()=>{
+    const existing = findSinalTattoo(id);
+    if(existing){
+      if(existing.debtPayments && existing.debtPayments.length) await reverseDebtPayments(existing.debtPayments);
+      await colDelete('tattoos', existing.id);
+    }
+    await colDelete('agenda', id);
+  });
 }
 
 /* ---- event form ---- */
