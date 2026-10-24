@@ -1466,6 +1466,7 @@ function agendaRow(a){
         ${meta?`<div class="row-sub">${escapeHtml(meta)}</div>`:''}
       </div>
       <div class="row-actions">
+        <span class="badge ${a.sinal>0?'ok':'warn'}">${a.sinal>0?'Sinal pago':'Sinal pendente'}</span>
         <button class="icon-btn" data-action="editAgenda" data-id="${a.id}">${ICONS.edit}</button>
         <button class="btn secondary" data-action="registerFromAgenda" data-id="${a.id}">Registrar</button>
         <button class="icon-btn" data-action="deleteAgenda" data-id="${a.id}">${ICONS.trash}</button>
