@@ -2068,7 +2068,7 @@ function dificuldadeOptionsHtml(selected){
   return `<option value="">Selecionar…</option>` + DIFICULDADE_OPTIONS.map(o=>`<option value="${o}" ${o===selected?'selected':''}>${o}</option>`).join('');
 }
 const ORCAMENTO_BASE = {'Pequena (até 8cm)':150, 'Média (8–18cm)':350, 'Grande (18–28cm)':550, 'Extra grande (28cm+)':750};
-const ORCAMENTO_MINIMO = 150;
+const ORCAMENTO_MINIMO = 120;
 const ORCAMENTO_DIFICULDADE_PCT_DEFAULT = {'Simples':0, 'Moderada':15, 'Complexa':30, 'Muito complexa':50};
 const ORCAMENTO_LOCAL_PCT_DEFAULT = {'Antebraço':0,'Braço':0,'Ombro':0,'Perna':0,'Coxa':0,'Panturrilha':5,'Costas':0,'Peito':10,'Costela':20,'Mão':25,'Pé':20,'Pescoço':15,'Outro':0};
 function getOrcamentoConfig(){
