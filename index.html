@@ -2247,6 +2247,7 @@ function openClassificarForm(gastoId){
       <button type="button" class="chip active" data-type="estoque">Estoque</button>
       <button type="button" class="chip" data-type="evento">Evento</button>
       <button type="button" class="chip" data-type="manual">Gasto avulso</button>
+      <button type="button" class="chip" data-type="ja">Já cadastrei</button>
     </div>
     <div id="classifBody"></div>
     <button type="button" class="btn block" id="classifConfirmBtn" style="margin-top:14px;">Confirmar classificação</button>
@@ -2262,6 +2263,8 @@ function openClassificarForm(gastoId){
     } else if(classifType==='evento'){
       const evs = [...state.events].sort(sortByDateDesc);
       el.innerHTML = evs.length? `<div class="field"><label>Evento</label><select id="classifEvent">${evs.map(e=>`<option value="${e.id}">${escapeHtml(e.name)} · ${fmtDateBR(e.date)}</option>`).join('')}</select></div>` : `<div class="empty">Nenhum evento cadastrado ainda.</div>`;
+    } else if(classifType==='ja'){
+      el.innerHTML = `<div class="hint">Use quando você já lançou essa compra à mão no Estoque (marcando cartão pessoal). Remove essa cópia que veio do Financas, pra não contar ${brl(total)} em dobro. O estoque não é alterado.</div>`;
     } else {
       el.innerHTML = `<div class="hint">Vira um gasto avulso normal, contando no lucro no mês do vencimento (${fmtDateBR(rows[0].date)}).</div>`;
     }
@@ -2298,6 +2301,9 @@ function openClassificarForm(gastoId){
       const expenses = [...(ev.expenses||[]), {id:uid(), desc, value:total, tipo:'Outros'}];
       await colUpdate('events', eventId, {expenses});
       for(const r of rows) await colUpdate('reembolsos', r.id, {origem:'evento', aClassificar:false});
+    } else if(classifType==='ja'){
+      btn.disabled = true;
+      for(const r of rows) await colDelete('reembolsos', r.id);
     } else {
       btn.disabled = true;
       for(const r of rows) await colUpdate('reembolsos', r.id, {origem:'manual', aClassificar:false});
