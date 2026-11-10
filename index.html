@@ -2079,7 +2079,7 @@ function getOrcamentoConfig(){
   };
 }
 function collectOrcamentoSamples(){
-  const fromAgenda = state.agenda.filter(a=>a.tamanho && a.dificuldade && (a.value>0) && !a.condicaoEspecial).map(a=>({tamanho:a.tamanho, dificuldade:a.dificuldade, localCorpo:a.localCorpo||'', value:a.value}));
+  const fromAgenda = state.agenda.filter(a=>a.tamanho && a.dificuldade && (a.value>0) && !a.condicaoEspecial && !(a.pecas&&a.pecas.length>1)).map(a=>({tamanho:a.tamanho, dificuldade:a.dificuldade, localCorpo:a.localCorpo||'', value:a.value}));
   const fromTattoos = state.tattoos.filter(t=>t.tamanho && t.dificuldade && (t.value>0) && !t.condicaoEspecial && t.type!=='Flash').map(t=>({tamanho:t.tamanho, dificuldade:t.dificuldade, localCorpo:t.localCorpo||'', value:t.value}));
   return [...fromAgenda, ...fromTattoos];
 }
@@ -2144,27 +2144,64 @@ function openOrcamentoConfigForm(){
   };
 }
 function openOrcamentoCalc(){
+  let pecas = [{tamanho:'', dificuldade:'', localCorpo:''}];
+  let descTipo = 'valor', descVal = 0;
+  const render = ()=>{
+    const ests = pecas.map(p=> (p.tamanho && p.dificuldade) ? estimateOrcamento(p.tamanho, p.dificuldade, p.localCorpo) : null);
+    const prontas = ests.filter(Boolean);
+    const subtotal = round2(prontas.reduce((s,e)=>s+e.value,0));
+    const descontoRs = round2(Math.min(subtotal, descTipo==='pct' ? subtotal*descVal/100 : descVal));
+    const total = round2(subtotal - descontoRs);
+    document.getElementById('orcPecas').innerHTML = pecas.map((p,i)=>`
+      <div class="materials-group" style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <div class="section-title" style="margin:0;">Tattoo ${i+1}</div>
+          ${pecas.length>1?`<button type="button" class="icon-btn" data-role="orcDel" data-i="${i}">${ICONS.trash}</button>`:''}
+        </div>
+        <div class="field"><label>Tamanho</label><select data-role="orcSel" data-i="${i}" data-k="tamanho">${tamanhoOptionsHtml(p.tamanho)}</select></div>
+        <div class="field"><label>Dificuldade</label><select data-role="orcSel" data-i="${i}" data-k="dificuldade">${dificuldadeOptionsHtml(p.dificuldade)}</select></div>
+        <div class="field"><label>Local do corpo</label><select data-role="orcSel" data-i="${i}" data-k="localCorpo">${localCorpoOptionsHtml(p.localCorpo)}</select></div>
+        ${ests[i]?`<div style="font-family:var(--font-mono);font-size:20px;font-weight:600;">${brl(ests[i].value)}</div>
+          <div style="font-size:11.5px;color:var(--text-muted);">${ests[i].hist?`Tabela ${brl(ests[i].formulaValue)} + histórico (${ests[i].hist.count} registro${ests[i].hist.count>1?'s':''})`:`Tabela · dificuldade +${ests[i].dPct}% · local +${ests[i].lPct}%`}</div>`:`<div class="hint">Selecione tamanho e dificuldade.</div>`}
+      </div>`).join('');
+    document.getElementById('orcResult').innerHTML = prontas.length ? `
+      <div class="materials-group" style="margin-top:4px;">
+        ${descontoRs>0?`<div style="font-size:12px;color:var(--text-muted);">Subtotal ${brl(subtotal)} · desconto −${brl(descontoRs)}${descTipo==='pct'?` (${descVal}%)`:''}</div>`:''}
+        <div style="font-size:11.5px;color:var(--text-muted);">${prontas.length>1?`Total das ${prontas.length} tattoos`:'Orçamento'}</div>
+        <div style="font-family:var(--font-mono);font-size:30px;font-weight:600;margin:4px 0;">${brl(total)}</div>
+      </div>
+      <button type="button" class="btn block" id="useOrcamentoBtn">Usar este valor num agendamento</button>` : '';
+    document.querySelectorAll('[data-role="orcSel"]').forEach(el=>{
+      el.onchange = ()=>{ pecas[+el.dataset.i][el.dataset.k] = el.value; render(); };
+    });
+    document.querySelectorAll('[data-role="orcDel"]').forEach(el=>{
+      el.onclick = ()=>{ pecas.splice(+el.dataset.i,1); render(); };
+    });
+    const btn = document.getElementById('useOrcamentoBtn');
+    if(btn) btn.onclick = ()=>{
+      const lista = [];
+      ests.forEach((e,i)=>{ if(e) lista.push({tamanho:pecas[i].tamanho, dificuldade:pecas[i].dificuldade, localCorpo:pecas[i].localCorpo, value:e.value}); });
+      const first = lista[0];
+      let notes = lista.length>1 ? 'Orçamento de '+lista.length+' tattoos:\n'+lista.map((x,i)=>`${i+1}) ${x.tamanho} · ${x.dificuldade}${x.localCorpo?' · '+x.localCorpo:''} — ${brl(x.value)}`).join('\n') : '';
+      if(descontoRs>0) notes += (notes?'\n':'')+`Desconto: −${brl(descontoRs)}${descTipo==='pct'?` (${descVal}%)`:''} sobre ${brl(subtotal)}`;
+      openAgendaForm({prefillOrc:{tamanho:first.tamanho, dificuldade:first.dificuldade, localCorpo:first.localCorpo, value: total, pecas: lista.length>1?lista:[], notes}});
+    };
+  };
   openModal('Calcular orçamento', `
-    <div class="field"><label>Tamanho</label><select id="orcTamanho">${tamanhoOptionsHtml()}</select></div>
-    <div class="field"><label>Dificuldade</label><select id="orcDificuldade">${dificuldadeOptionsHtml()}</select></div>
-    <div class="field"><label>Local do corpo</label><select id="orcLocal">${localCorpoOptionsHtml()}</select></div>
+    <div id="orcPecas"></div>
+    <button type="button" class="add-line-btn" id="orcAddBtn" style="margin-bottom:10px;">${ICONS.plus} Adicionar outra tattoo</button>
+    <div class="field-row">
+      <div class="field"><label>Desconto (opcional)</label><input id="orcDescVal" type="number" step="0.01" min="0" placeholder="0" /></div>
+      <div class="field"><label>Tipo</label><select id="orcDescTipo"><option value="valor">R$</option><option value="pct">%</option></select></div>
+    </div>
     <div id="orcResult"></div>
     <button type="button" class="add-line-btn" id="orcConfigBtn" style="margin-top:6px;">${ICONS.calc} Configurar orçamento</button>
   `);
-  const recalc = ()=>{
-    const tamanho = document.getElementById('orcTamanho').value;
-    const dificuldade = document.getElementById('orcDificuldade').value;
-    const localCorpo = document.getElementById('orcLocal').value;
-    const resEl = document.getElementById('orcResult');
-    if(!tamanho || !dificuldade){ resEl.innerHTML = `<div class="empty">Selecione tamanho e dificuldade.</div>`; return; }
-    const est = estimateOrcamento(tamanho, dificuldade, localCorpo);
-    resEl.innerHTML = orcamentoResultHtml(est);
-    const btn = document.getElementById('useOrcamentoBtn');
-    if(btn) btn.onclick = ()=>{ openAgendaForm({prefillOrc:{tamanho, dificuldade, localCorpo, value: est.value}}); };
-  };
-  ['orcTamanho','orcDificuldade','orcLocal'].forEach(id=>document.getElementById(id).onchange=recalc);
+  document.getElementById('orcDescVal').oninput = (e)=>{ descVal = Math.max(0, parseFloat(e.target.value)||0); render(); };
+  document.getElementById('orcDescTipo').onchange = (e)=>{ descTipo = e.target.value; render(); };
+  document.getElementById('orcAddBtn').onclick = ()=>{ pecas.push({tamanho:'', dificuldade:'', localCorpo:''}); render(); };
   document.getElementById('orcConfigBtn').onclick = openOrcamentoConfigForm;
-  recalc();
+  render();
 }
 function openAReceberModal(){
   const unpaidTattoos = state.tattoos.filter(t=>!isPago(t)).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
@@ -2748,7 +2785,7 @@ function openAgendaForm({editId=null, prefillOrc=null} = {}){
           <div class="check-sub">Preço combinado (amigo, família, permuta...) — não entra no cálculo de orçamento</div>
         </div>
       </label>
-      <div class="field"><label>Observações</label><textarea name="notes">${existing?escapeHtml(existing.notes||''):''}</textarea></div>
+      <div class="field"><label>Observações</label><textarea name="notes">${existing?escapeHtml(existing.notes||''):escapeHtml((prefillOrc&&prefillOrc.notes)||'')}</textarea></div>
       <button type="submit" class="btn block">${existing?'Salvar alterações':'Agendar'}</button>
     </form>`);
   wireDateTimeFields(document.getElementById('agendaForm'));
@@ -2763,6 +2800,7 @@ function openAgendaForm({editId=null, prefillOrc=null} = {}){
       tamanho:f.elements.tamanho.value, dificuldade:f.elements.dificuldade.value, localCorpo:f.elements.localCorpo.value,
       condicaoEspecial: f.elements.condicaoEspecial.checked,
       notes:f.elements.notes.value.trim(),
+      pecas: existing ? (existing.pecas||[]) : ((prefillOrc&&prefillOrc.pecas)||[]),
     };
     if(existing){
       await colUpdate('agenda', existing.id, data);
